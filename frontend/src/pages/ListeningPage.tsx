@@ -1,11 +1,16 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import Layout from "../components/Layout.js";
 export default function ListeningPage() {
+  const navigate = useNavigate();
+  const handleClick = () => {
+    navigate("/summary");
+  };
   return (
     <Layout
       title="민원확인"
       content={`민원을 듣고 있어요`}
       headerImage="src/assets/duck1.png"
+      onClick={handleClick}
     >
       <div
         style={{
@@ -17,10 +22,7 @@ export default function ListeningPage() {
           textAlign: "center",
           width: "90%",
         }}
-      >
-        예: 연금은 언제 받아?
-        <br />집 앞 가로등에 불이 안 들어와.
-      </div>
+      ></div>
     </Layout>
   );
 }

@@ -5,6 +5,7 @@ import "./App.css";
 import ClockPage from "./pages/ClockPage.js";
 import ComplaintPage from "./pages/ComplaintPage.js";
 import ListeningPage from "./pages/ListeningPage.js";
+import SummaryPage from "./pages/SummaryPage.js";
 
 function App() {
   return (
@@ -13,6 +14,7 @@ function App() {
         <Route path="/" element={<ClockPage />} />
         <Route path="/complaint" element={<ComplaintPage />} />
         <Route path="/listen" element={<ListeningPage />} />
+        <Route path="/summary" element={<SummaryPage />} />
       </Routes>
     </BrowserRouter>
   );
