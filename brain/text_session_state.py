@@ -31,6 +31,7 @@ text_session_state.py
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional
 
@@ -122,15 +123,30 @@ class TextSessionState:
 
     def build_effective_text(self, user_raw: str) -> str:
         """
-        직전 턴이 clarification이면,
-        이전 문장 + "추가 위치 정보: {user_raw}"를 합쳐서 반환.
+        직전 턴이 clarification이면 기본적으로
+        이전 문장 + "추가 위치 정보: {user_raw}"를 합쳐서 반환한다.
 
-        그렇지 않으면 user_raw 그대로 반환.
+        다만, 이번 발화가 연금/복지, 심리지원 등
+        '완전히 다른 주제'로 보이면
+        - 더 이상 위치 답변이 아니라 새 민원으로 간주하고
+        - 합치지 않고 user_raw 그대로 반환한다.
         """
-        if self._pending_clarification_text:
-            base = self._pending_clarification_text
-            return f"{base} 추가 위치 정보: {user_raw}"
-        return user_raw
+        if not self._pending_clarification_text:
+            return user_raw
+
+        # 👉 현재 발화가 '새로운 민원 주제'처럼 보이는지 간단히 체크
+        #    (연금/복지/심리지원 키워드 위주)
+        t = user_raw.replace(" ", "")
+        if re.search(r"(연금|국민연금|기초연금|복지|수급자|우울|불안|상담|죽고싶)", t):
+            # clarification 체인 끊기: 다음 턴은 새 이슈로 처리
+            self._pending_clarification_text = None
+            self.active_issue_id = None
+            return user_raw
+
+        # 그 외에는 "추가 위치 정보"로 보고 합친다.
+        base = self._pending_clarification_text
+        return f"{base} 추가 위치 정보: {user_raw}"
+
 
     # -----------------------------------------------------
     # 턴 등록 + 이슈 라우팅
