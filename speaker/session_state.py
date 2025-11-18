@@ -16,6 +16,7 @@ session_state.py
    - history 저장
    - 마지막 위치(last_location)
    - 마지막 카테고리(last_category)
+   - 텍스트 멀티턴 엔진용 TextSessionState(text_state)
 4. minwon_engine 결과를 기반으로 speaker_state 갱신
 
 👉 핵심 포인트:
@@ -25,6 +26,8 @@ minwon_engine.py는 오직 "텍스트 내용"만 처리합니다.
 
 import uuid
 from typing import Dict, Any, List
+
+from brain.text_session_state import TextSessionState
 
 
 class SessionState:
@@ -42,7 +45,8 @@ class SessionState:
         #               "turn": 1,
         #               "history": [...],
         #               "last_location": None,
-        #               "last_category": None
+        #               "last_category": None,
+        #               "text_state": TextSessionState()
         #           }
         #       }
         #   }
@@ -84,6 +88,8 @@ class SessionState:
                 "history": [],
                 "last_location": None,
                 "last_category": None,
+                # 텍스트 멀티턴 엔진(TextSessionState)을 화자별로 하나씩 보유
+                "text_state": TextSessionState(),
             }
 
     def next_turn(self, session_id: str, speaker_id: str) -> int:
@@ -113,6 +119,14 @@ class SessionState:
     def get_last_category(self, session_id: str, speaker_id: str):
         self.ensure_speaker(session_id, speaker_id)
         return self.sessions[session_id]["speakers"][speaker_id]["last_category"]
+
+    def get_text_state(self, session_id: str, speaker_id: str) -> TextSessionState:
+        """
+        특정 화자에 연결된 TextSessionState를 반환합니다.
+        (멀티턴 민원 엔진과 동일한 로직을 음성에도 적용하기 위함)
+        """
+        self.ensure_speaker(session_id, speaker_id)
+        return self.sessions[session_id]["speakers"][speaker_id]["text_state"]
 
     # ---------------------------------------------------------
     # 상태 업데이트 (민원 엔진 결과 기반)
