@@ -18,12 +18,11 @@ const wrapperStyle: CSSProperties = {
   overflow: "hidden",
 };
 
-/* 하단 큰 흰색 카드 */
 const whiteCardStyle: CSSProperties = {
   position: "absolute",
   top: "0",
   width: "100vw",
-  height: "600px",
+  height: "650px",
   background: "#FFFFFF",
   borderRadius: "0px 0px 150px 150px",
   display: "flex",
