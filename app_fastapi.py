@@ -7,9 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field  # Field 추가
+from speaker.stt_whisper import transcribe_bytes
 
 from brain.minwon_engine import run_pipeline_once  # 민원 엔진
 
@@ -85,15 +86,18 @@ class TextTurnRequest(BaseModel):
     - text: STT 결과나 키보드 입력 등, 한 번에 처리할 민원 문장
     """
     session_id: Optional[str] = Field(
-        None,
-        description="이전 턴에서 받은 세션 ID. 첫 요청일 때는 비워두면 백엔드가 새로 생성합니다.",
-        example=None,
-    )
+    default=None,
+    description="이전 턴에서 받은 세션 ID. 첫 요청일 때는 비워두면 백엔드가 새로 생성합니다.",
+    examples=[None],
+)
+
     text: str = Field(
-        ...,
-        description="민원 내용 텍스트 (음성 STT 결과 또는 키보드 입력)",
-        example="우리집 앞에 나무가 쓰러져서 대문을 막았어",
-    )
+    ...,
+    description="민원 내용 텍스트",
+    examples=["우리집 앞에 나무가 쓰러져서 대문을 막았어"],
+)
+
+
 
 
 class TextTurnResponse(BaseModel):
@@ -106,12 +110,12 @@ class TextTurnResponse(BaseModel):
     session_id: str = Field(
         ...,
         description="현재 대화 세션 ID. 이후 요청에서도 이 값을 그대로 사용하면 됩니다.",
-        example="c3b9d2c8-1234-4f10-9f21-abcdef123456",
+        examples=["c3b9d2c8-1234-4f10-9f21-abcdef123456"],
     )
     used_text: str = Field(
         ...,
         description="clarification(추가 위치 질문 등)까지 결합된 실제 분석 대상 텍스트",
-        example="우리집 앞에 나무가 쓰러져서 대문을 막았어",
+        examples=["우리집 앞에 나무가 쓰러져서 대문을 막았어"],
     )
     engine_result: Dict[str, Any] = Field(
         ...,
@@ -123,7 +127,7 @@ class TextTurnResponse(BaseModel):
             "- user_facing: 주민 안내용 텍스트 묶음\n"
             "- staff_payload: 담당자용 요약 정보"
         ),
-        example={
+        examples=[{
             "stage": "clarification",
             "minwon_type": "도로",
             "handling_type": "simple_guide",
@@ -144,11 +148,18 @@ class TextTurnResponse(BaseModel):
                 "risk_level": "긴급",
                 "needs_visit": True,
                 "citizen_request": "",
-                "raw_keywords": ["우리집", "앞에", "나무가", "쓰러져서", "대문을"],
+                "raw_keywords": [
+                    "우리집",
+                    "앞에",
+                    "나무가",
+                    "쓰러져서",
+                    "대문을",
+                ],
                 "memo_for_staff": "위치 정보 부족으로 추가 질문 필요. 내용상 현장 출동이 필요해 보이는 민원일 수 있음.",
             },
-        },
+        }],
     )
+
 
 
 # ============================================================
@@ -280,6 +291,77 @@ def process_text_turn(body: TextTurnRequest):
         used_text=use_text,
         engine_result=engine_result,
     )
+
+
+    
+
+# ============================================================
+# 3. 음성(STT) + 민원 엔진 한 번에 처리 (mp3 업로드)
+# ============================================================
+
+@app.post(
+    "/stt",
+    summary="음성 파일(STT) + 민원 엔진 한 번에 처리",
+    description=(
+        "프론트에서 녹음한 음성 파일(mp3 등)을 업로드하면\n\n"
+        "1. OpenAI Whisper를 사용해 STT (음성 → 텍스트)\n"
+        "2. 변환된 텍스트를 민원 엔진(run_pipeline_once)에 넣어 분류/요약\n\n"
+        "까지 한 번에 처리하여 결과를 반환합니다."
+    ),
+    tags=["stt", "minwon"],
+)
+async def stt_and_minwon(audio: UploadFile = File(...)):
+    # 1) 업로드 파일 검증
+    if not audio:
+        raise HTTPException(status_code=400, detail="audio 파일이 필요합니다.")
+
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="비어 있는 오디오 파일입니다.")
+
+    # 2) Whisper STT 호출
+    text = transcribe_bytes(
+        audio_bytes,
+        language="ko",
+        file_name=audio.filename or "recording.mp3",
+    )
+
+    # STT 실패
+    if not text:
+        return {
+            "session_id": None,
+            "text": "",
+            "engine_result": None,
+            "user_facing": None,
+            "staff_payload": None,
+        }
+
+    # 3) 민원 엔진 1회성 실행
+    history: List[Dict[str, str]] = []
+    engine_result = run_pipeline_once(text, history)
+
+    # 4) 1회성 session_id 생성 (로그용)
+    session_id = str(uuid.uuid4())
+    log_event(
+        session_id,
+        {
+            "type": "stt_turn",
+            "input_text": text,
+            "engine_result": engine_result,
+            "source": "stt_endpoint",
+        },
+    )
+
+    # 5) 응답 구조
+    return {
+        "session_id": session_id,
+        "text": text,  # 프론트 ListeningPage에서 data.text 로 사용
+        "engine_result": engine_result,
+        "user_facing": engine_result.get("user_facing", {}),
+        "staff_payload": engine_result.get("staff_payload", {}),
+    }
+
+
 
 
 # ============================================================
