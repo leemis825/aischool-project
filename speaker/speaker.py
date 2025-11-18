@@ -107,8 +107,9 @@ class SpeakerPipeline:
             - 오디오 자르기
             - STT 수행
             - SessionState에서 turn/history 조회
+            - (화자별 TextSessionState에서 effective_text 생성)
             - minwon_engine.run_pipeline_once 호출
-            - SessionState.update_state 로 반영
+            - TextSessionState.register_turn + SessionState.update_state 반영
         4) 전체 타임라인 리스트 반환
 
         :param audio_path: 입력 음성 파일 경로
@@ -147,14 +148,25 @@ class SpeakerPipeline:
                 print(f"[INFO] STT 결과 비어 있음: {speaker_id} {start:.2f}~{end:.2f}")
                 continue
 
-            # 3-3) SessionState에서 turn/history 가져오기
+            # 3-3) SessionState에서 TextSessionState / turn / history 가져오기
+            text_state = self.state.get_text_state(session_id, speaker_id)
+            # 텍스트 모드와 동일하게: 직전 턴이 clarification이면 문장 합치기
+            effective_text = text_state.build_effective_text(text)
+
             turn = self.state.next_turn(session_id, speaker_id)
             history = self.state.get_history(session_id, speaker_id)
 
-            # 3-4) 민원 텍스트 엔진 호출
-            engine_result = run_pipeline_once(text, history)
+            # 3-4) 민원 텍스트 엔진 호출 (effective_text 기준)
+            engine_result = run_pipeline_once(effective_text, history)
 
-            # 3-5) SessionState 갱신
+            # 3-5) TextSessionState 멀티턴 상태 갱신 (이슈 A/B/C, clarification 등)
+            text_state.register_turn(
+                user_raw=text,
+                effective_text=effective_text,
+                engine_result=engine_result,
+            )
+
+            # 3-6) SessionState 갱신 (화자별 history/last_location/last_category)
             self.state.update_state(
                 session_id=session_id,
                 speaker_id=speaker_id,
@@ -162,13 +174,14 @@ class SpeakerPipeline:
                 user_text=text,
             )
 
-            # 3-6) 이 segment에 대한 결과 기록
+            # 3-7) 이 segment에 대한 결과 기록
             results.append({
                 "speaker": speaker_id,
                 "turn": turn,
                 "start": start,
                 "end": end,
                 "text": text,
+                "effective_text": effective_text,
                 "engine_result": engine_result,
             })
 

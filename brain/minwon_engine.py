@@ -484,6 +484,28 @@ category는 반드시 위 목록 중 하나의 '정확한 문자열'만 사용�
         "risk_level": risk_level,
     }
 
+def build_fallback_summary(text: str, category: str) -> str:
+    """
+    요약 LLM이 실패했을 때 사용할 안전한 1차 요약.
+    - 카테고리별로 아주 거친 템플릿을 쓰고
+    - 그게 안 되면 30자 자르기.
+    """
+    t = text.strip()
+
+    # 연금/복지: 출생연도 있으면 같이 붙여 주기
+    if category == "연금/복지":
+        m = re.search(r"(19[0-9]{2}|20[0-2][0-9])년생", t)
+        if m:
+            return f"{m.group(0)} 연금 수령 시기 문의"
+        return "연금 수령 시기/자격 문의"
+
+    # 심리지원
+    if category == "심리지원":
+        return "정신건강·심리지원 상담 요청"
+
+    # 도로/시설물/생활민원 등 공통 기본값: 30자 자르기
+    t_no_nl = t.replace("\n", " ")
+    return t_no_nl[:30] + ("..." if len(t_no_nl) > 30 else "")
 
 # -------------------- Summarizer (담당자용 요약 밑재료) --------------------
 def summarize_for_staff(text: str, category: str) -> Dict[str, Any]:
@@ -509,19 +531,22 @@ def summarize_for_staff(text: str, category: str) -> Dict[str, Any]:
     try:
         data = json.loads(out)
     except Exception:
+        # 🔧 LLM JSON 실패 시: 카테고리 기반 30자 요약으로 폴백
         data = {
-            "summary_3lines": text[:120] + ("..." if len(text) > 120 else ""),
+            "summary_3lines": build_fallback_summary(text, category),
             "location": "",
             "time_info": "",
             "needs_visit": False,
             "risk_level": "보통",
         }
 
-    data.setdefault("summary_3lines", text[:120])
+    # 혹시 summary_3lines가 비어 있으면 역시 fallback으로 채움
+    data.setdefault("summary_3lines", build_fallback_summary(text, category))
     data.setdefault("location", "")
     data.setdefault("time_info", "")
     data.setdefault("needs_visit", False)
     data.setdefault("risk_level", "보통")
+
 
     return data
 
@@ -693,8 +718,12 @@ def build_staff_payload(summary_data: Dict[str, Any],
     memo_parts = []
     if category == "기타":
         memo_parts.append("카테고리 불명확: 담당자 재분류 필요.")
-    if not summary_data.get("location"):
+
+    # 🔧 주소가 의미 있는 카테고리(도로/시설물/생활민원)에서만 주소 부족을 알림
+    if (category in ("도로", "시설물", "생활민원")
+            and not summary_data.get("location")):
         memo_parts.append("민원에서 명시적인 주소는 추출되지 않았음.")
+
     if handling["need_official_ticket"] and not needs_visit:
         memo_parts.append("접수는 필요하나 방문 여부는 담당자 판단 필요.")
 

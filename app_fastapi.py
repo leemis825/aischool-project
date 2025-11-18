@@ -3,10 +3,13 @@
 
 import uuid
 import json
-from datetime import datetime
+import os
+from datetime import datetime, date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import httpx
+from fastapi import FastAPI
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field  # Field 추가
@@ -40,6 +43,23 @@ def log_event(session_id: str, payload: Dict[str, Any]) -> None:
 
     with log_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+# ============================================================
+# 외부 API 키 / URL 설정
+# ============================================================
+
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")  # WeatherAPI.com 키
+KASI_SERVICE_KEY = os.getenv("KASI_SERVICE_KEY")  # 한국천문연구원(OpenAPI) 인증키 (Encoded 그대로)
+
+WEATHER_API_URL = "http://api.weatherapi.com/v1/current.json"
+
+KASI_LUNAR_URL = (
+    "http://apis.data.go.kr/B090041/openapi/service/LrsrCldInfoService/getLunCalInfo"
+)
+KASI_24DIV_URL = (
+    "http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/get24DivisionsInfo"
+)
 
 
 # ============================================================
@@ -158,6 +178,165 @@ class TextTurnResponse(BaseModel):
                 "memo_for_staff": "위치 정보 부족으로 추가 질문 필요. 내용상 현장 출동이 필요해 보이는 민원일 수 있음.",
             },
         }],
+    )
+
+
+# ============================================================
+# 날씨 / 음력 / 절기 모델
+# ============================================================
+
+class WeatherInfo(BaseModel):
+    temp: float
+    feels_like: float
+    condition: str
+    location: str
+
+
+class LunarInfo(BaseModel):
+    solar_date: str       # 양력 날짜 (YYYY-MM-DD)
+    lunar_date: str       # 음력 날짜 (YYYY-MM-DD)
+    seasonal_term: str    # 24절기 이름 (없으면 "")
+
+
+class HeaderStatusResponse(BaseModel):
+    now_iso: str          # ISO 포맷 현재 시각
+    date_display: str     # 화면용 날짜 문자열 (예: '2025년 11월 12일 (수)')
+    weather: Optional[WeatherInfo] = None
+    lunar: Optional[LunarInfo] = None
+
+
+# ============================================================
+# 대기 화면용 보조 함수들 (실제 외부 API 연동)
+# ============================================================
+
+async def fetch_weather(location: str = "Gwangju") -> WeatherInfo:
+    """
+    WeatherAPI.com 현재 날씨 조회.
+    location 예: 'Gwangju', 'Seoul', '광주' 등
+    """
+    if not WEATHER_API_KEY:
+        raise RuntimeError("WEATHER_API_KEY 환경변수가 설정되지 않았습니다.")
+
+    params = {
+        "key": WEATHER_API_KEY,
+        "q": location,
+        "lang": "ko",
+        "aqi": "no",
+    }
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        res = await client.get(WEATHER_API_URL, params=params)
+        res.raise_for_status()
+        data = res.json()
+
+    current = data["current"]
+    cond = current["condition"]
+    loc = data["location"]
+
+    return WeatherInfo(
+        temp=float(current["temp_c"]),
+        feels_like=float(current["feelslike_c"]),
+        condition=str(cond["text"]),
+        location=str(loc["name"]),
+    )
+
+
+async def _fetch_lunar_date(today: date) -> str:
+    """
+    양력 today 기준 음력 날짜(YYYY-MM-DD)를 반환.
+    한국천문연구원 LrsrCldInfoService/getLunCalInfo 사용.
+    """
+    if not KASI_SERVICE_KEY:
+        raise RuntimeError("KASI_SERVICE_KEY 환경변수가 설정되지 않았습니다.")
+
+    params = {
+        "solYear": today.strftime("%Y"),
+        "solMonth": today.strftime("%m"),
+        "solDay": today.strftime("%d"),
+        "ServiceKey": KASI_SERVICE_KEY,
+        "_type": "json",
+    }
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        res = await client.get(KASI_LUNAR_URL, params=params)
+        res.raise_for_status()
+        data = res.json()
+
+    body = data["response"]["body"]
+    if int(body.get("totalCount", 0)) == 0:
+        return ""
+
+    item = body["items"]["item"]  # 하루 데이터 1개라고 가정
+    lun_year = int(item["lunYear"])
+    lun_month = int(item["lunMonth"])
+    lun_day = int(item["lunDay"])
+
+    return f"{lun_year:04d}-{lun_month:02d}-{lun_day:02d}"
+
+
+async def _fetch_seasonal_term(today: date) -> str:
+    """
+    오늘 날짜에 해당하는 24절기 이름을 반환.
+    없으면 빈 문자열("").
+    한국천문연구원 SpcdeInfoService/get24DivisionsInfo 사용.
+    """
+    if not KASI_SERVICE_KEY:
+        raise RuntimeError("KASI_SERVICE_KEY 환경변수가 설정되지 않았습니다.")
+
+    params = {
+        "solYear": today.strftime("%Y"),
+        "solMonth": today.strftime("%m"),
+        "ServiceKey": KASI_SERVICE_KEY,
+        "_type": "json",
+        "numOfRows": "50",
+        "pageNo": "1",
+    }
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        res = await client.get(KASI_24DIV_URL, params=params)
+        res.raise_for_status()
+        data = res.json()
+
+    body = data["response"]["body"]
+    if int(body.get("totalCount", 0)) == 0:
+        return ""
+
+    items = body["items"]["item"]
+    if isinstance(items, dict):
+        items = [items]
+
+    today_str = today.strftime("%Y%m%d")
+    for item in items:
+        if str(item["locdate"]) == today_str:
+            return str(item["dateName"])
+
+    return ""
+
+
+async def get_lunar_and_seasonal(today: Optional[date] = None) -> LunarInfo:
+    """
+    오늘 기준 음력 날짜 + 절기 이름을 한 번에 반환.
+    """
+    if today is None:
+        today = date.today()
+
+    lunar_date = ""
+    seasonal_term = ""
+
+    try:
+        lunar_date = await _fetch_lunar_date(today)
+    except Exception as e:
+        print(f"[WARN] Lunar API error: {e}")
+
+    try:
+        seasonal_term = await _fetch_seasonal_term(today)
+    except Exception as e:
+        print(f"[WARN] Seasonal-term API error: {e}")
+
+    return LunarInfo(
+        solar_date=today.isoformat(),
+        lunar_date=lunar_date,
+        seasonal_term=seasonal_term,
     )
 
 
@@ -290,6 +469,54 @@ def process_text_turn(body: TextTurnRequest):
         session_id=session_id,
         used_text=use_text,
         engine_result=engine_result,
+    )
+
+
+# ============================================================
+# 3. 대기 화면용 헤더 정보 API
+# ============================================================
+
+@app.get(
+    "/api/status/header",
+    response_model=HeaderStatusResponse,
+    summary="대기 화면용 헤더 정보(시간/날짜/날씨/음력/절기)",
+    description="""
+키오스크 대기 화면 상단에 표시할
+
+- 현재 시간/날짜
+- 날씨
+- 음력 날짜
+- 절기
+
+정보를 반환합니다.
+
+민원 대화와는 별개로, 대기 화면에서만 주기적으로 호출하면 됩니다.
+""",
+    tags=["status"],
+)
+async def get_header_status(location: str = "Gwangju"):
+    now = datetime.now()
+    # 화면용 날짜 문자열 (요일은 나중에 한글 요일로 커스텀 가능)
+    date_display = now.strftime("%Y년 %m월 %d일 (%a)")
+
+    weather: Optional[WeatherInfo] = None
+    lunar: Optional[LunarInfo] = None
+
+    try:
+        weather = await fetch_weather(location)
+    except Exception as e:
+        print(f"[WARN] Weather API error: {e}")
+
+    try:
+        lunar = await get_lunar_and_seasonal(now.date())
+    except Exception as e:
+        print(f"[WARN] Lunar/Seasonal API error: {e}")
+
+    return HeaderStatusResponse(
+        now_iso=now.isoformat(),
+        date_display=date_display,
+        weather=weather,
+        lunar=lunar,
     )
 
 
