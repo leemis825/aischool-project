@@ -4,6 +4,7 @@
 import uuid
 import json
 import os
+import io
 from datetime import datetime, date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -12,6 +13,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from openai import OpenAI
 
 from speaker.stt_whisper import transcribe_bytes
 from brain.minwon_engine import run_pipeline_once  # 민원 엔진
@@ -59,6 +61,19 @@ KASI_24DIV_URL = (
     "http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/get24DivisionsInfo"
 )
 
+# ============================================================
+# OpenAI 클라이언트 (다국어 STT + 번역용)
+# ============================================================
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise RuntimeError(".env에 OPENAI_API_KEY가 없습니다. 다국어 STT/번역을 위해 API 키를 설정해 주세요.")
+
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Whisper / 번역용 모델 (필요하면 .env에서 덮어쓰기)
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "gpt-4o-mini-transcribe")
+CHAT_MODEL = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-4o-mini")
 
 # ============================================================
 # FastAPI 앱 기본 세팅 (Swagger 설명 포함)
@@ -480,6 +495,8 @@ def process_text_turn(body: TextTurnRequest):
         used_text=use_text,
         engine_result=engine_result,
     )
+
+
 # ============================================================
 # 로그 조회용 모델 & 유틸
 # ============================================================
@@ -686,15 +703,117 @@ async def get_header_status(location: str = "Gwangju"):
 
 
 # ============================================================
-# 4. 음성(STT) + 민원 엔진 한 번에 처리
+# 다국어 STT + 언어 감지 + 번역 유틸 함수
+# ============================================================
+
+def stt_multilang_bytes(audio_bytes: bytes, file_name: str = "recording.webm") -> str:
+    """
+    Whisper에 language 파라미터를 주지 않고 호출해서
+    언어 자동 감지 + 텍스트 변환을 수행한다.
+    """
+    if not audio_bytes:
+        print("[WARN] stt_multilang_bytes에 빈 바이트가 전달되었습니다.")
+        return ""
+
+    bio = io.BytesIO(audio_bytes)
+    if file_name:
+        try:
+            bio.name = file_name  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    try:
+        resp = openai_client.audio.transcriptions.create(
+            model=WHISPER_MODEL,
+            file=bio,
+            response_format="text",  # 순수 텍스트
+        )
+        if isinstance(resp, str):
+            return resp.strip()
+        text = getattr(resp, "text", "") or str(resp)
+        return text.strip()
+    except Exception as e:
+        print(f"[WARN] Whisper multilang STT 호출 중 오류 발생: {e}")
+        return ""
+
+
+def detect_language(text: str) -> str:
+    """
+    입력 텍스트의 언어를 ISO 639-1 코드(ko, en, ja, zh 등)로 감지.
+    """
+    if not text:
+        return "ko"
+
+    try:
+        resp = openai_client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "사용자 문장의 언어를 감지하고, "
+                        "ISO 639-1 두 글자 코드만 소문자로 출력하세요. "
+                        "예: ko, en, ja, zh."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            temperature=0.0,
+            max_tokens=8,
+        )
+        code = resp.choices[0].message.content.strip().lower()
+        code = code.replace("`", "").replace(" ", "")
+
+        for cand in ["ko", "en", "ja", "zh", "vi"]:
+            if cand in code:
+                return cand
+
+        return (code[:2] or "ko")
+    except Exception as e:
+        print(f"[WARN] 언어 감지 중 오류 발생: {e}")
+        return "ko"
+
+
+def translate_text(text: str, target_lang: str) -> str:
+    """
+    text를 target_lang 언어로 번역.
+    target_lang 예: 'ko', 'en', 'ja' ...
+    """
+    if not text:
+        return ""
+
+    try:
+        resp = openai_client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"다음 문장을 {target_lang} 언어로 자연스럽게 번역해 주세요. "
+                        "추가 설명 없이 번역된 문장만 출력하세요."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            temperature=0.2,
+            max_tokens=400,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[WARN] 번역 중 오류 발생: {e}")
+        return text
+
+
+# ============================================================
+# 4. 음성(STT) + 민원 엔진 한 번에 처리 (한국어 전용)
 # ============================================================
 
 @app.post(
     "/stt",
-    summary="음성 파일(STT) + 민원 엔진 한 번에 처리",
+    summary="음성 파일(STT) + 민원 엔진 한 번에 처리 (한국어 전용)",
     description=(
         "프론트에서 녹음한 음성 파일(webm/mp3 등)을 업로드하면\n\n"
-        "1. OpenAI Whisper를 사용해 STT (음성 → 텍스트)\n"
+        "1. OpenAI Whisper를 사용해 STT (음성 → 텍스트, language='ko')\n"
         "2. 변환된 텍스트를 민원 엔진(run_pipeline_once)에 넣어 분류/요약\n\n"
         "까지 한 번에 처리하여 결과를 반환합니다."
     ),
@@ -748,7 +867,7 @@ async def stt_and_minwon(request: Request):
 
     filename = upload.filename or "recording.webm"
 
-    # 4) Whisper STT 호출
+    # 4) Whisper STT 호출 (한국어 고정)
     text = transcribe_bytes(
         audio_bytes,
         language="ko",
@@ -788,6 +907,120 @@ async def stt_and_minwon(request: Request):
         "engine_result": engine_result,
         "user_facing": engine_result.get("user_facing", {}),
         "staff_payload": engine_result.get("staff_payload", {}),
+    }
+
+
+# ============================================================
+# 5. 다국어 음성(STT) + 민원 엔진 한 번에 처리
+# ============================================================
+
+@app.post(
+    "/stt/multilang",
+    summary="다국어 음성(STT) + 민원 엔진 처리 (원어 응답 포함)",
+    description=(
+        "프론트에서 녹음한 음성 파일(webm/mp3 등)을 업로드하면\n\n"
+        "1. Whisper 다국어 STT (언어 자동 감지, 음성 → 원문 텍스트)\n"
+        "2. 텍스트 언어 감지(ko/en/ja/…)\n"
+        "3. 한국어로 번역해서 민원 엔진(run_pipeline_once)에 넣고 분류/요약\n"
+        "4. 주민 안내 멘트(user_facing)를 다시 원래 언어로 번역해서 반환\n\n"
+        "까지 한 번에 처리합니다."
+    ),
+    tags=["stt", "minwon"],
+)
+async def stt_and_minwon_multilang(request: Request):
+    # 1) multipart/form-data 파싱
+    try:
+        form = await request.form()
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"폼 데이터를 읽는 중 오류가 발생했습니다: {e}",
+        )
+
+    upload = form.get("audio") or form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(
+            status_code=400,
+            detail="폼 데이터에 'audio' 또는 'file' 필드가 없거나 잘못되었습니다.",
+        )
+
+    try:
+        audio_bytes = await upload.read()
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"업로드된 파일을 읽는 중 오류가 발생했습니다: {e}",
+        )
+
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="비어 있는 오디오 파일입니다.")
+
+    filename = getattr(upload, "filename", None) or "recording.webm"
+
+    # 2) 다국어 Whisper STT
+    original_text = stt_multilang_bytes(audio_bytes, file_name=filename)
+
+    if not original_text:
+        return {
+            "session_id": None,
+            "original_lang": None,
+            "original_text": "",
+            "engine_input_ko": "",
+            "engine_result": None,
+            "user_facing_for_user": None,
+            "staff_payload": None,
+        }
+
+    # 3) 언어 감지
+    lang = detect_language(original_text)
+
+    # 4) 한국어로 변환해 민원 엔진에 넣을 텍스트 준비
+    if lang == "ko":
+        text_for_engine = original_text
+    else:
+        text_for_engine = translate_text(original_text, target_lang="ko")
+
+    history: List[Dict[str, str]] = []
+    engine_result = run_pipeline_once(text_for_engine, history)
+    if not isinstance(engine_result, dict):
+        engine_result = {}
+
+    user_facing_ko = engine_result.get("user_facing") or {}
+    staff_payload = engine_result.get("staff_payload") or {}
+
+    # 5) 사용자에게 보여줄 언어 쪽 user_facing 생성
+    if lang == "ko":
+        user_facing_for_user = user_facing_ko
+    else:
+        user_facing_for_user = {}
+        for key, value in user_facing_ko.items():
+            if isinstance(value, str) and value.strip():
+                user_facing_for_user[key] = translate_text(value, target_lang=lang)
+            else:
+                user_facing_for_user[key] = value
+
+    # 6) 세션/로그 기록
+    session_id = str(uuid.uuid4())
+    log_event(
+        session_id,
+        {
+            "type": "stt_multilang_turn",
+            "original_lang": lang,
+            "original_text": original_text,
+            "engine_input_ko": text_for_engine,
+            "engine_result": engine_result,
+            "source": "stt_multilang_endpoint",
+        },
+    )
+
+    return {
+        "session_id": session_id,
+        "original_lang": lang,
+        "original_text": original_text,
+        "engine_input_ko": text_for_engine,
+        "engine_result": engine_result,
+        "user_facing_for_user": user_facing_for_user,
+        "staff_payload": staff_payload,
     }
 
 
