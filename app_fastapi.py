@@ -9,14 +9,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import FastAPI
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field  # Field 추가
+from pydantic import BaseModel, Field
+
 from speaker.stt_whisper import transcribe_bytes
-
 from brain.minwon_engine import run_pipeline_once  # 민원 엔진
-
 
 # ============================================================
 # 경로 설정: 로그 디렉터리 (사후 분석용)
@@ -67,11 +65,11 @@ KASI_24DIV_URL = (
 # ============================================================
 
 app = FastAPI(
-    title="간편민원접수 백엔드 API (텍스트 전용 1단계)",
+    title="간편민원접수 백엔드 API",
     description="""
-마을 회관 키오스크용 **간편 민원 분류·안내 백엔드**의 텍스트 버전 API입니다.
+마을 회관 키오스크용 **간편 민원 분류·안내 백엔드** API입니다.
 
-- 키오스크(프론트)는 음성을 STT로 변환한 **텍스트**를 이 API로 전송합니다.
+- 키오스크(프론트)는 음성을 STT로 변환한 **텍스트** 또는 음성 파일을 이 API로 전송합니다.
 - 이 백엔드는 텍스트를 기반으로
   - 민원 카테고리 분류 (도로/시설물/연금·복지/심리지원/생활민원/기타)
   - 단순 안내/전화 연결/공식 민원 접수 여부 판단
@@ -106,18 +104,16 @@ class TextTurnRequest(BaseModel):
     - text: STT 결과나 키보드 입력 등, 한 번에 처리할 민원 문장
     """
     session_id: Optional[str] = Field(
-    default=None,
-    description="이전 턴에서 받은 세션 ID. 첫 요청일 때는 비워두면 백엔드가 새로 생성합니다.",
-    examples=[None],
-)
+        default=None,
+        description="이전 턴에서 받은 세션 ID. 첫 요청일 때는 비워두면 백엔드가 새로 생성합니다.",
+        examples=[None],
+    )
 
     text: str = Field(
-    ...,
-    description="민원 내용 텍스트",
-    examples=["우리집 앞에 나무가 쓰러져서 대문을 막았어"],
-)
-
-
+        ...,
+        description="민원 내용 텍스트",
+        examples=["우리집 앞에 나무가 쓰러져서 대문을 막았어"],
+    )
 
 
 class TextTurnResponse(BaseModel):
@@ -147,37 +143,6 @@ class TextTurnResponse(BaseModel):
             "- user_facing: 주민 안내용 텍스트 묶음\n"
             "- staff_payload: 담당자용 요약 정보"
         ),
-        examples=[{
-            "stage": "clarification",
-            "minwon_type": "도로",
-            "handling_type": "simple_guide",
-            "need_call_transfer": False,
-            "need_official_ticket": False,
-            "user_facing": {
-                "short_title": "추가 정보 확인",
-                "main_message": "죄송하지만, 정확한 위치를 한 번만 더 알려 주시면 좋겠습니다.",
-                "next_action_guide": "예를 들어 ○○동 ○○아파트 앞, ○○리 마을회관 앞 골목처럼 말씀해 주세요.",
-                "phone_suggestion": "",
-                "confirm_question": "",
-            },
-            "staff_payload": {
-                "summary": "우리집 앞에 나무가 쓰러져서 대문을 막았어",
-                "category": "도로",
-                "location": "",
-                "time_info": "",
-                "risk_level": "긴급",
-                "needs_visit": True,
-                "citizen_request": "",
-                "raw_keywords": [
-                    "우리집",
-                    "앞에",
-                    "나무가",
-                    "쓰러져서",
-                    "대문을",
-                ],
-                "memo_for_staff": "위치 정보 부족으로 추가 질문 필요. 내용상 현장 출동이 필요해 보이는 민원일 수 있음.",
-            },
-        }],
     )
 
 
@@ -203,6 +168,56 @@ class HeaderStatusResponse(BaseModel):
     date_display: str     # 화면용 날짜 문자열 (예: '2025년 11월 12일 (수)')
     weather: Optional[WeatherInfo] = None
     lunar: Optional[LunarInfo] = None
+
+
+# ============================================================
+# 텍스트 기반 민원 분석 단일 호출 API
+# ============================================================
+
+class MinwonAnalyzeRequest(BaseModel):
+    text: str
+
+
+@app.post(
+    "/api/minwon/analyze",
+    summary="텍스트 기반 민원 분석 (STT 없이)",
+    tags=["minwon"],
+)
+async def analyze_minwon(req: MinwonAnalyzeRequest):
+    """
+    - 프론트/외부 시스템에서 이미 텍스트로 받은 민원을
+      우리 민원 엔진(run_pipeline_once)으로 분류/요약해서 반환하는 API
+    - STT는 포함하지 않고, text -> engine_result 만 담당
+    """
+
+    raw_text = (req.text or "").strip()
+    if not raw_text:
+        return {
+            "input_text": "",
+            "engine_result": None,
+            "user_facing": None,
+            "staff_payload": None,
+        }
+
+    # 지금은 history 비우고 one-shot 으로만 처리
+    history: List[Dict[str, str]] = []
+
+    # 민원 엔진 실행
+    engine_result = run_pipeline_once(raw_text, history=history)
+
+    # 혹시 엔진에서 None 이나 이상한 값이 돌아올 경우 대비
+    if not isinstance(engine_result, dict):
+        engine_result = {}
+
+    user_facing = engine_result.get("user_facing") or {}
+    staff_payload = engine_result.get("staff_payload") or {}
+
+    return {
+        "input_text": raw_text,
+        "engine_result": engine_result,
+        "user_facing": user_facing,
+        "staff_payload": staff_payload,
+    }
 
 
 # ============================================================
@@ -277,8 +292,7 @@ async def _fetch_lunar_date(today: date) -> str:
 async def _fetch_seasonal_term(today: date) -> str:
     """
     오늘 날짜에 해당하는 24절기 이름을 반환.
-    없으면 빈 문자열("").
-    한국천문연구원 SpcdeInfoService/get24DivisionsInfo 사용.
+    없으면 빈 문자열(""). 한국천문연구원 SpcdeInfoService/get24DivisionsInfo 사용.
     """
     if not KASI_SERVICE_KEY:
         raise RuntimeError("KASI_SERVICE_KEY 환경변수가 설정되지 않았습니다.")
@@ -340,7 +354,6 @@ async def get_lunar_and_seasonal(today: Optional[date] = None) -> LunarInfo:
     )
 
 
-
 # ============================================================
 # 0. 헬스 체크 / 기본 라우트
 # ============================================================
@@ -352,7 +365,7 @@ async def get_lunar_and_seasonal(today: Optional[date] = None) -> LunarInfo:
     tags=["health"],
 )
 def root():
-    return {"message": "간편민원접수 FastAPI (텍스트 전용) 동작 중"}
+    return {"message": "간편민원접수 FastAPI 동작 중"}
 
 
 # ============================================================
@@ -408,9 +421,6 @@ def start_text_session():
 - 직전 턴 결과의 `stage`가 `"clarification"`인 경우,
   - 이번에 들어온 `text`를 **이전 문장에 '추가 위치 정보: ...' 형태로 붙여서**
     하나의 문장으로 다시 분석합니다.
-- 예:
-  1. `우리집 앞에 나무가 쓰러져서 대문을 막았어` → stage=clarification
-  2. `동곡리 마을회관 앞 골목이야` → 두 문장을 결합해 다시 분석 → 도로 + official_ticket
 """,
     tags=["minwon"],
 )
@@ -470,6 +480,162 @@ def process_text_turn(body: TextTurnRequest):
         used_text=use_text,
         engine_result=engine_result,
     )
+# ============================================================
+# 로그 조회용 모델 & 유틸
+# ============================================================
+
+class LogSessionSummary(BaseModel):
+    session_id: str
+    first_timestamp: Optional[str] = None
+    last_timestamp: Optional[str] = None
+    event_count: int
+    event_types: List[str]
+
+
+class LogSessionListResponse(BaseModel):
+    sessions: List[LogSessionSummary]
+
+
+class LogSessionDetailResponse(BaseModel):
+    session_id: str
+    events: List[Dict[str, Any]]
+
+
+def _summarize_log_file(path: Path) -> Optional[LogSessionSummary]:
+    """
+    단일 JSONL 로그 파일(한 세션)을 읽어서
+    - 최초/최종 timestamp
+    - 이벤트 개수
+    - 이벤트 타입 목록
+    을 요약해서 반환.
+    """
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except Exception as e:
+        print(f"[WARN] 로그 파일 읽기 실패: {path} ({e})")
+        return None
+
+    if not lines:
+        return None
+
+    event_count = len(lines)
+    event_types: List[str] = []
+    first_ts: Optional[str] = None
+    last_ts: Optional[str] = None
+
+    for idx, line in enumerate(lines):
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+
+        ts = rec.get("timestamp")
+        if ts:
+            if first_ts is None:
+                first_ts = ts
+            last_ts = ts
+
+        etype = rec.get("type")
+        if etype and etype not in event_types:
+            event_types.append(etype)
+
+    session_id = path.stem  # 파일명에서 .jsonl 제거
+
+    return LogSessionSummary(
+        session_id=session_id,
+        first_timestamp=first_ts,
+        last_timestamp=last_ts,
+        event_count=event_count,
+        event_types=event_types,
+    )
+
+
+# ============================================================
+#  로그 세션 목록 조회
+# ============================================================
+
+@app.get(
+    "/api/logs/sessions",
+    response_model=LogSessionListResponse,
+    summary="로그 세션 목록 조회",
+    description="""
+백엔드에서 기록한 JSONL 로그 파일을 기반으로
+
+- 최근 세션 ID 목록
+- 각 세션의 최초/최종 이벤트 시간
+- 이벤트 개수
+- 이벤트 타입 목록
+
+을 요약해서 반환합니다.
+
+발표용/모니터링용 뷰에서
+'백엔드가 어떤 세션들을 처리했는지' 목록을 보여줄 때 사용합니다.
+""",
+    tags=["logs"],
+)
+def list_log_sessions(limit: int = 20):
+    # 로그 디렉터리 내의 .jsonl 파일들을 최근 수정시간 기준으로 정렬
+    files = sorted(
+        LOG_DIR.glob("*.jsonl"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+    summaries: List[LogSessionSummary] = []
+    for path in files[:limit]:
+        summary = _summarize_log_file(path)
+        if summary is not None:
+            summaries.append(summary)
+
+    return LogSessionListResponse(sessions=summaries)
+
+
+# ============================================================
+#  특정 세션 로그 상세 조회
+# ============================================================
+
+@app.get(
+    "/api/logs/{session_id}",
+    response_model=LogSessionDetailResponse,
+    summary="특정 세션 로그 상세 조회",
+    description="""
+주어진 `session_id`에 해당하는 JSONL 로그 파일을 읽어서
+
+- 각 이벤트 레코드(타임스탬프, 타입, 입력 텍스트, 엔진 결과 등)를
+  그대로 배열로 반환합니다.
+
+프론트에서는 이 데이터를 기반으로
+타임라인/테이블 형태로 '백엔드 내부 처리 흐름'을 시각화할 수 있습니다.
+""",
+    tags=["logs"],
+)
+def get_log_session_detail(session_id: str, max_events: int = 200):
+    log_path = LOG_DIR / f"{session_id}.jsonl"
+    if not log_path.exists():
+        raise HTTPException(status_code=404, detail="해당 session_id의 로그가 없습니다.")
+
+    events: List[Dict[str, Any]] = []
+    try:
+        with log_path.open("r", encoding="utf-8") as f:
+            for idx, line in enumerate(f):
+                if idx >= max_events:
+                    break
+                try:
+                    rec = json.loads(line)
+                    events.append(rec)
+                except Exception:
+                    continue
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"로그 파일을 읽는 중 오류가 발생했습니다: {e}",
+        )
+
+    return LogSessionDetailResponse(
+        session_id=session_id,
+        events=events,
+    )
 
 
 # ============================================================
@@ -496,7 +662,6 @@ def process_text_turn(body: TextTurnRequest):
 )
 async def get_header_status(location: str = "Gwangju"):
     now = datetime.now()
-    # 화면용 날짜 문자열 (요일은 나중에 한글 요일로 커스텀 가능)
     date_display = now.strftime("%Y년 %m월 %d일 (%a)")
 
     weather: Optional[WeatherInfo] = None
@@ -520,37 +685,74 @@ async def get_header_status(location: str = "Gwangju"):
     )
 
 
-    
-
 # ============================================================
-# 3. 음성(STT) + 민원 엔진 한 번에 처리 (mp3 업로드)
+# 4. 음성(STT) + 민원 엔진 한 번에 처리
 # ============================================================
 
 @app.post(
     "/stt",
     summary="음성 파일(STT) + 민원 엔진 한 번에 처리",
     description=(
-        "프론트에서 녹음한 음성 파일(mp3 등)을 업로드하면\n\n"
+        "프론트에서 녹음한 음성 파일(webm/mp3 등)을 업로드하면\n\n"
         "1. OpenAI Whisper를 사용해 STT (음성 → 텍스트)\n"
         "2. 변환된 텍스트를 민원 엔진(run_pipeline_once)에 넣어 분류/요약\n\n"
         "까지 한 번에 처리하여 결과를 반환합니다."
     ),
     tags=["stt", "minwon"],
 )
-async def stt_and_minwon(audio: UploadFile = File(...)):
-    # 1) 업로드 파일 검증
-    if not audio:
-        raise HTTPException(status_code=400, detail="audio 파일이 필요합니다.")
+async def stt_and_minwon(request: Request):
+    """
+    - FormData로 올 때는 `audio` 또는 `file` 필드 이름을 사용한다고 가정
+    - FastAPI의 UploadFile 파라미터(File(...))를 시그니처에서 빼고,
+      request.form() 으로 직접 파싱해서 422 문제를 피한다.
+    """
 
-    audio_bytes = await audio.read()
+    # 1) multipart/form-data 파싱
+    try:
+        form = await request.form()
+    except Exception as e:
+        # 아예 multipart 자체가 아니거나, 파싱이 안 될 때
+        raise HTTPException(
+            status_code=400,
+            detail=f"폼 데이터를 읽는 중 오류가 발생했습니다: {e}",
+        )
+
+    # 2) audio 또는 file 필드에서 업로드 파일 가져오기
+    upload = form.get("audio") or form.get("file")
+
+    if upload is None:
+        # 파일 필드 자체가 없을 때
+        raise HTTPException(
+            status_code=400,
+            detail="폼 데이터에 'audio' 또는 'file' 필드가 없습니다.",
+        )
+
+    # form.get(...) 결과가 UploadFile 이 아닌 경우 방어
+    if not hasattr(upload, "filename") or not hasattr(upload, "read"):
+        raise HTTPException(
+            status_code=400,
+            detail="업로드된 파일 형식을 인식할 수 없습니다.",
+        )
+
+    # 3) 실제 바이너리 읽기
+    try:
+        audio_bytes = await upload.read()
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"업로드된 파일을 읽는 중 오류가 발생했습니다: {e}",
+        )
+
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="비어 있는 오디오 파일입니다.")
 
-    # 2) Whisper STT 호출
+    filename = upload.filename or "recording.webm"
+
+    # 4) Whisper STT 호출
     text = transcribe_bytes(
         audio_bytes,
         language="ko",
-        file_name=audio.filename or "recording.mp3",
+        file_name=filename,
     )
 
     # STT 실패
@@ -563,11 +765,11 @@ async def stt_and_minwon(audio: UploadFile = File(...)):
             "staff_payload": None,
         }
 
-    # 3) 민원 엔진 1회성 실행
+    # 5) 민원 엔진 1회성 실행
     history: List[Dict[str, str]] = []
     engine_result = run_pipeline_once(text, history)
 
-    # 4) 1회성 session_id 생성 (로그용)
+    # 6) 1회성 session_id 생성 (로그용)
     session_id = str(uuid.uuid4())
     log_event(
         session_id,
@@ -579,7 +781,7 @@ async def stt_and_minwon(audio: UploadFile = File(...)):
         },
     )
 
-    # 5) 응답 구조
+    # 7) 응답 구조
     return {
         "session_id": session_id,
         "text": text,  # 프론트 ListeningPage에서 data.text 로 사용
@@ -587,8 +789,6 @@ async def stt_and_minwon(audio: UploadFile = File(...)):
         "user_facing": engine_result.get("user_facing", {}),
         "staff_payload": engine_result.get("staff_payload", {}),
     }
-
-
 
 
 # ============================================================
