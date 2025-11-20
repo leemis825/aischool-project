@@ -9,6 +9,7 @@ export default function ListeningPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sttResult, setSttResult] = useState<string>("");
+  const [ttsUrl, setTtsUrl] = useState<string | null>(null); // 🔹 TTS 오디오 URL
 
   // 🔹 녹음 관련 ref들
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -57,6 +58,7 @@ export default function ListeningPage() {
             console.error(err);
             setError("녹음 처리 중 오류가 발생했어요. 다시 시도해 주세요.");
             setIsUploading(false);
+
           }
         };
 
@@ -194,12 +196,48 @@ export default function ListeningPage() {
     ctx.fillRect(0, 0, width, height);
   };
 
+  // 🔹 텍스트를 /tts 로 보내서 음성(mp3)을 받아오는 함수
+  const requestTTS = async (text: string) => {
+    try {
+      const trimmed = text?.trim();
+      if (!trimmed) return;
+
+      // 이전에 만든 오디오 URL이 있으면 정리
+      if (ttsUrl) {
+        URL.revokeObjectURL(ttsUrl);
+      }
+
+      const res = await fetch("http://localhost:8000/tts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: trimmed }),
+      });
+
+      if (!res.ok) {
+        throw new Error("TTS 요청 실패");
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      setTtsUrl(url);
+    } catch (e) {
+      console.error(e);
+      setError("안내 음성을 불러오는 중 오류가 발생했어요.");
+    }
+  };
+
   // 🔹 Blob을 받아서 /stt 로 업로드
   const uploadBlob = async (blob: Blob) => {
     setError(null);
 
     try {
+      console.log("🎤전송할 오디오 Blob:", blob);
+      console.log("크기(bytes):", blob.size);
+      console.log("타입:", blob.type);
       const file = new File([blob], "voice.webm", { type: "audio/webm" });
+      console.log("🎤생성된 File:", file);
       const form = new FormData();
       form.append("audio", file);
 
@@ -214,9 +252,15 @@ export default function ListeningPage() {
 
       const data = await res.json();
       console.log("🔊 /stt 응답:", data);
+      
 
       setSttResult(data.text || "(빈 텍스트)");
       setIsUploading(false);
+
+      // 🔹 STT 결과를 음성으로도 안내
+      await requestTTS(
+        data.text || "민원이 접수되었습니다. 잠시만 기다려 주세요."
+      );
 
       // 나중에 summary 페이지 연결
       // navigate("/summary", { state: { sttText: data.text, ... } });
@@ -290,6 +334,13 @@ export default function ListeningPage() {
             <p style={{ fontWeight: "bold", marginBottom: 8 }}>인식된 텍스트</p>
             <p>{sttResult}</p>
           </>
+        )}
+
+        {ttsUrl && !isUploading && (
+          <div style={{ marginTop: 16 }}>
+            <p style={{ fontWeight: "bold", marginBottom: 4 }}>안내 음성</p>
+            <audio src={ttsUrl} controls autoPlay />
+          </div>
         )}
       </div>
     </Layout>

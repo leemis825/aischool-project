@@ -1,0 +1,25 @@
+# ---- 1. 베이스 이미지 선택 ----
+FROM python:3.11-slim
+
+# ---- 2. 기본 설정 ----
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# ---- 3. 빌드에 필요한 최소 패키지 ----
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+ && rm -rf /var/lib/apt/lists/*
+
+# ---- 4. 의존성 설치 ----
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ---- 5. 애플리케이션 소스 복사 ----
+COPY . .
+
+# ---- 6. 포트 & 실행 커맨드 ----
+EXPOSE 8000
+
+CMD ["uvicorn", "app_fastapi:app", "--host", "0.0.0.0", "--port", "8000"]

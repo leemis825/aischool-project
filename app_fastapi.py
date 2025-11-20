@@ -5,18 +5,26 @@ import uuid
 import json
 import os
 import io
+import urllib.request
+import urllib.parse
+
 from datetime import datetime, date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+import requests  # 🔹 네이버 TTS 호출용
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse  # 🔹 음성 스트리밍 응답
 from pydantic import BaseModel, Field
 from openai import OpenAI
 
+from dotenv import load_dotenv
 from speaker.stt_whisper import transcribe_bytes
 from brain.minwon_engine import run_pipeline_once  # 민원 엔진
+
+load_dotenv()  # .env 읽어오기
 
 # ============================================================
 # 경로 설정: 로그 디렉터리 (사후 분석용)
@@ -60,6 +68,13 @@ KASI_LUNAR_URL = (
 KASI_24DIV_URL = (
     "http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/get24DivisionsInfo"
 )
+
+NAVER_API_KEY_ID = os.getenv("NAVER_API_KEY_ID")
+NAVER_API_KEY = os.getenv("NAVER_API_KEY")
+
+# 🔹 네이버 TTS API 엔드포인트 (test_tts.py에서 성공한 URL로 맞춰줄 것)
+#NAVER_TTS_URL = "https://naveropenapi.apigw.ntruss.com/voice/v1/tts"
+NAVER_TTS_URL = "https://naveropenapi.apigw.ntruss.com/tts-premium/v1/tts"
 
 # ============================================================
 # OpenAI 클라이언트 (다국어 STT + 번역용)
@@ -909,6 +924,58 @@ async def stt_and_minwon(request: Request):
         "staff_payload": engine_result.get("staff_payload", {}),
     }
 
+
+class TtsRequest(BaseModel):
+    text: str  # 읽어 줄 문장
+
+
+@app.post(
+    "/tts",
+    summary="네이버 CLOVA Voice TTS (텍스트 → 음성)",
+    description=(
+        "텍스트를 받아 네이버 CLOVA Voice API를 호출해 MP3 음성으로 변환합니다.\n"
+        "프론트에서는 blob으로 받아 <audio> 태그로 재생하면 됩니다."
+    ),
+    tags=["tts"],
+)
+def tts(req: TtsRequest):
+    if not NAVER_API_KEY_ID or not NAVER_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="NAVER_API_KEY_ID 또는 NAVER_API_KEY 환경변수가 설정되지 않았습니다.",
+        )
+
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text 파라미터가 비어 있습니다.")
+
+    # 🔹 test_tts.py와 동일한 방식으로 호출
+    headers = {
+        "X-NCP-APIGW-API-KEY-ID": NAVER_API_KEY_ID,
+        "X-NCP-APIGW-API-KEY": NAVER_API_KEY,
+    }
+
+    data = {
+        "speaker": "nara",
+        "speed": "0",
+        "text": text,
+    }
+
+    try:
+        res = requests.post(NAVER_TTS_URL, headers=headers, data=data, timeout=10)
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"TTS 요청 중 네트워크 오류: {e}",
+        )
+
+    if res.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"TTS API 응답 오류: {res.status_code}, {res.text}",
+        )
+
+    return StreamingResponse(io.BytesIO(res.content), media_type="audio/mpeg")
 
 # ============================================================
 # 5. 다국어 음성(STT) + 민원 엔진 한 번에 처리
