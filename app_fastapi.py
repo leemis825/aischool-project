@@ -185,6 +185,103 @@ def update_chat_session_from_engine(
     with db_cursor() as cur:
         cur.execute(sql, params)
 
+# 공통 유틸: 세션 보장
+def ensure_session(session_id: Optional[str], source: str) -> str:
+    """
+    session_id가 없으면 새로 만들고,
+    있으면 TEXT_SESSIONS에 세션이 있는지 보장한다.
+    반환: 보장된 session_id
+    """
+    sid = session_id or str(uuid.uuid4())
+
+    if sid not in TEXT_SESSIONS:
+        db_session_id = insert_chat_session_initial()
+        TEXT_SESSIONS[sid] = {
+            "history": [],
+            "pending_clarification": None,
+            "db_session_id": db_session_id,
+        }
+        log_event(sid, {
+            "type": "session_start",
+            "source": source,
+            "db_session_id": db_session_id,
+        })
+
+    return sid
+
+# 공통 유틸: 텍스트 턴 처리 + 영속화
+def handle_turn_and_persist(
+    session_id: str,
+    original_text: str,          # 사용자가 말한 원문(ko든 외국어든)
+    text_for_engine: str,        # 엔진에 넣을 텍스트(ko)
+    source: str,
+):
+    session = TEXT_SESSIONS[session_id]
+    history = session["history"]
+    pending = session["pending_clarification"]
+    db_session_id = session["db_session_id"]
+
+    # clarification 결합 규칙(텍스트 턴과 동일)
+    if pending is not None:
+        prev_text = pending["original_text"]
+        used_text_for_engine = f"{prev_text} 추가 위치 정보: {text_for_engine}"
+        used_text_for_user   = f"{prev_text} 추가 위치 정보: {original_text}"
+    else:
+        used_text_for_engine = text_for_engine
+        used_text_for_user   = original_text
+
+    # (1) 사용자 메시지 저장
+    insert_chat_message(db_session_id, sender="senior", message=used_text_for_user)
+
+    # (다국어라서 원문!=ko 번역이면 번역본도 저장)
+    if used_text_for_engine != used_text_for_user:
+        insert_chat_message(db_session_id, sender="senior_ko", message=used_text_for_engine)
+
+    # (2) 엔진 실행
+    engine_result = run_pipeline_once(used_text_for_engine, history)
+    if not isinstance(engine_result, dict):
+        engine_result = {}
+
+    history.append({"role": "user", "content": used_text_for_engine})
+
+    # clarification 상태 갱신
+    if engine_result.get("stage") == "clarification":
+        session["pending_clarification"] = {"original_text": used_text_for_engine}
+    else:
+        session["pending_clarification"] = None
+
+    # (3) 봇 메시지 저장(현행 규칙 유지)
+    bot_text = ""
+    uf = engine_result.get("user_facing")
+    if isinstance(uf, dict):
+        bot_text = " ".join([str(v) for v in uf.values() if isinstance(v, str)])
+    else:
+        bot_text = str(uf) if uf else ""
+
+    if bot_text:
+        insert_chat_message(db_session_id, sender="bot", message=bot_text)
+
+    # (4) 세션 snapshot 업데이트
+    # citizen_request 등에 사용자 원문이 남아야 하므로 original_text=used_text_for_user
+    update_chat_session_from_engine(
+        db_session_id,
+        engine_result=engine_result,
+        original_text=used_text_for_user,
+    )
+
+    # (5) 로그
+    log_event(session_id, {
+        "type": "turn",
+        "source": source,
+        "input_text": original_text,
+        "engine_input_ko": used_text_for_engine,
+        "engine_result": engine_result,
+        "db_session_id": db_session_id,
+    })
+
+    return engine_result, used_text_for_engine
+
+
 
 
 # ============================================================
@@ -621,77 +718,26 @@ def start_text_session():
     tags=["minwon"],
 )
 def process_text_turn(body: TextTurnRequest):
-    session_id = body.session_id or str(uuid.uuid4())
-
-    if session_id not in TEXT_SESSIONS:
-        db_session_id = insert_chat_session_initial()  # 🔹 암묵적 세션도 DB 생성
-        TEXT_SESSIONS[session_id] = {
-            "history": [],
-            "pending_clarification": None,
-            "db_session_id": db_session_id,
-        }
-        log_event(session_id, {"type": "session_start", "source": "implicit_by_text_turn", "db_session_id": db_session_id})
-
-    session = TEXT_SESSIONS[session_id]
-    history = session["history"]
-    pending = session["pending_clarification"]
-    db_session_id = session["db_session_id"]
+    # ✅ 세션 보장(기존 생성 로직 제거)
+    session_id = ensure_session(body.session_id, source="text_turn")
 
     original_text = body.text.strip()
+    if not original_text:
+        raise HTTPException(status_code=400, detail="text가 비어 있습니다.")
 
-    if pending is not None:
-        prev_text = pending["original_text"]
-        use_text = f"{prev_text} 추가 위치 정보: {original_text}"
-    else:
-        use_text = original_text
-
-    # 🔹 (1) 사용자 메시지 저장
-    insert_chat_message(db_session_id, sender="senior", message=use_text)
-
-    engine_result = run_pipeline_once(use_text, history)
-
-    history.append({"role": "user", "content": use_text})
-
-    if engine_result.get("stage") == "clarification":
-        session["pending_clarification"] = {"original_text": use_text}
-    else:
-        session["pending_clarification"] = None
-
-    # 🔹 (2) 봇 메시지 저장
-    # user_facing이 dict라면 화면에 실제 보여줄 대표 문장만 이어붙이거나,
-    # 일단 JSON 문자열로 저장하는 방식이 안전함.
-    bot_text = ""
-    uf = engine_result.get("user_facing")
-    if isinstance(uf, dict):
-        # 키 순서대로 합쳐 저장 (최소 가정)
-        bot_text = " ".join([str(v) for v in uf.values() if isinstance(v, str)])
-    else:
-        bot_text = str(uf) if uf else ""
-
-    if bot_text:
-        insert_chat_message(db_session_id, sender="bot", message=bot_text)
-
-    # 🔹 (3) 세션 snapshot 업데이트
-    update_chat_session_from_engine(
-        db_session_id,
-        engine_result=engine_result,
-        original_text=use_text,
+    # ✅ 공통 턴 처리 + DB 저장
+    engine_result, used_text = handle_turn_and_persist(
+        session_id=session_id,
+        original_text=original_text,
+        text_for_engine=original_text,  # 텍스트는 그대로 ko 입력
+        source="text_turn",
     )
-
-    log_event(session_id, {
-        "type": "text_turn",
-        "input_text": original_text,
-        "used_text": use_text,
-        "engine_result": engine_result,
-        "db_session_id": db_session_id,
-    })
 
     return TextTurnResponse(
         session_id=session_id,
-        used_text=use_text,
+        used_text=used_text,
         engine_result=engine_result,
     )
-
 
 
 # ============================================================
@@ -1081,42 +1127,23 @@ async def stt_and_minwon(request: Request):
             "staff_payload": None,
         }
 
-    # 5) 민원 엔진 1회성 실행
-    history: List[Dict[str, str]] = []
-    engine_result = run_pipeline_once(text, history)
+    # 5) session_id 옵션 받기 (FormData에서)
+    session_id_from_form = form.get("session_id")
+    session_id = ensure_session(session_id_from_form, source="stt")
 
-    # 🔹 DB 저장 (단발 세션)
-    db_session_id = insert_chat_session_initial()
-    insert_chat_message(db_session_id, "senior", text)
-
-    bot_text = ""
-    uf = engine_result.get("user_facing")
-    if isinstance(uf, dict):
-        bot_text = " ".join([str(v) for v in uf.values() if isinstance(v, str)])
-    else:
-        bot_text = str(uf) if uf else ""
-    if bot_text:
-        insert_chat_message(db_session_id, "bot", bot_text)
-
-    update_chat_session_from_engine(db_session_id, engine_result, original_text=text)
-
-    # 6) 1회성 session_id 생성 (로그용)
-    session_id = str(uuid.uuid4())
-    log_event(
-        session_id,
-        {
-            "type": "stt_turn",
-            "input_text": text,
-            "engine_result": engine_result,
-            "source": "stt_endpoint",
-        },
+    # ✅ 공통 턴 처리 + DB 저장
+    engine_result, used_text = handle_turn_and_persist(
+        session_id=session_id,
+        original_text=text,      # 원문=ko
+        text_for_engine=text,    # 엔진입력=ko
+        source="stt",
     )
 
-    # 7) 응답 구조
     return {
         "session_id": session_id,
-        "db_session_id": db_session_id,
-        "text": text,  # 프론트 ListeningPage에서 data.text 로 사용
+        "db_session_id": TEXT_SESSIONS[session_id]["db_session_id"],
+        "text": text,
+        "used_text": used_text,
         "engine_result": engine_result,
         "user_facing": engine_result.get("user_facing", {}),
         "staff_payload": engine_result.get("staff_payload", {}),
@@ -1245,15 +1272,22 @@ async def stt_and_minwon_multilang(request: Request):
     else:
         text_for_engine = translate_text(original_text, target_lang="ko")
 
-    history: List[Dict[str, str]] = []
-    engine_result = run_pipeline_once(text_for_engine, history)
-    if not isinstance(engine_result, dict):
-        engine_result = {}
+    # ✅ session_id 옵션 받기 + 세션 보장
+    session_id_from_form = form.get("session_id")
+    session_id = ensure_session(session_id_from_form, source="stt_multilang")
+
+    # ✅ 공통 턴 처리 + DB 저장(clarification 포함)
+    engine_result, used_text = handle_turn_and_persist(
+        session_id=session_id,
+        original_text=original_text,       # 원문 저장
+        text_for_engine=text_for_engine,   # ko 번역본 엔진 입력
+        source="stt_multilang",
+    )
 
     user_facing_ko = engine_result.get("user_facing") or {}
     staff_payload = engine_result.get("staff_payload") or {}
 
-    # 5) 사용자에게 보여줄 언어 쪽 user_facing 생성
+    # 5) 사용자에게 보여줄 언어 쪽 user_facing 생성 (기존 로직 유지)
     if lang == "ko":
         user_facing_for_user = user_facing_ko
     else:
@@ -1264,46 +1298,17 @@ async def stt_and_minwon_multilang(request: Request):
             else:
                 user_facing_for_user[key] = value
 
-    # 🔹 DB 저장 (단발 세션)
-    db_session_id = insert_chat_session_initial()
-    insert_chat_message(db_session_id, "senior", original_text)
-
-    # user_facing_for_user가 dict면 합쳐서 저장
-    bot_text = ""
-    if isinstance(user_facing_for_user, dict):
-        bot_text = " ".join([str(v) for v in user_facing_for_user.values() if isinstance(v, str)])
-    else:
-        bot_text = str(user_facing_for_user) if user_facing_for_user else ""
-    if bot_text:
-        insert_chat_message(db_session_id, "bot", bot_text)
-
-    update_chat_session_from_engine(db_session_id, engine_result, original_text=text_for_engine)
-
-
-    # 6) 세션/로그 기록
-    session_id = str(uuid.uuid4())
-    log_event(
-        session_id,
-        {
-            "type": "stt_multilang_turn",
-            "original_lang": lang,
-            "original_text": original_text,
-            "engine_input_ko": text_for_engine,
-            "engine_result": engine_result,
-            "source": "stt_multilang_endpoint",
-        },
-    )
-
     return {
         "session_id": session_id,
-        "db_session_id": db_session_id,
+        "db_session_id": TEXT_SESSIONS[session_id]["db_session_id"],
         "original_lang": lang,
         "original_text": original_text,
-        "engine_input_ko": text_for_engine,
+        "engine_input_ko": used_text,
         "engine_result": engine_result,
         "user_facing_for_user": user_facing_for_user,
         "staff_payload": staff_payload,
     }
+
 
 
 # ============================================================
