@@ -210,28 +210,51 @@ def ensure_session(session_id: Optional[str], source: str) -> str:
     return sid
 
 AFFIRMATIVE_SHORTS = ["응", "네", "그래", "그래요", "맞아", "맞아요", "ㅇㅇ", "ㅇㅋ", "예", "웅"]
+HESITATION_WORDS = ["음", "음...", "아", "아...", "흠", "저기", "그..."]
+UNCLEAR_WORDS = ["그냥", "몰라", "모르겠어", "모르겠어요"]
+REVERSE_QUESTION = ["맞지?", "맞죠?", "맞나?", "그렇지?"]
+CALL_REQUEST = ["전화해줘", "전화해 주세요", "전화 부탁해", "전화 연결", "전화좀"]
 
 def expand_short_affirmative(text: str, last_stage: Optional[str]) -> str:
     """
-    사용자가 '응/네/그래요' 같은 단답을 입력했을 때
-    직전 엔진 stage에 따라 의미를 확장해서 반환.
+    사용자가 단답/머뭇거림/불명확/역질문/전화요청을 했을 때
+    문장 확장하여 엔진이 이해할 수 있도록 보정.
     """
     t = text.strip()
     if t not in AFFIRMATIVE_SHORTS:
         return text  # 단답이 아니면 그대로 사용
 
-    # 단답일 때 stage별 의미 확장
-    if last_stage == "clarification":
-        return "네, 제가 말한 내용이 맞습니다. 계속 이어서 처리해 주세요."
-    elif last_stage == "guide":
-        return "네, 안내해 주신 내용 이해했습니다."
-    elif last_stage == "handoff":
-        return "네, 안내해 주신 절차대로 진행하겠습니다."
-    elif last_stage == "classification":
-        return "네, 상황을 조금 더 설명드릴게요."
-    else:
-        # stage가 없는 경우(첫 턴 등)
-        return "네, 계속 진행해 주세요."
+    # 1) 기존 단답 처리
+    if t in AFFIRMATIVE_SHORTS:
+        if last_stage == "clarification":
+            return "네, 제가 말한 내용이 맞습니다. 계속 이어서 처리해 주세요."
+        elif last_stage == "guide":
+            return "네, 안내해 주신 내용 이해했습니다."
+        elif last_stage == "handoff":
+            return "네, 안내해 주신 절차대로 진행하겠습니다."
+        elif last_stage == "classification":
+            return "네, 상황을 조금 더 설명드릴게요."
+        else:
+            return "네, 계속 진행해 주세요."
+
+    # 2) 머뭇거림 처리 (“음…”, “아…”)
+    if t in HESITATION_WORDS:
+        return "네, 계속 이어서 진행해 주세요."
+
+    # 3) 불명확 발화 (“그냥”, “몰라”)
+    if t in UNCLEAR_WORDS:
+        return "제가 이해할 수 있도록 조금만 더 설명해 주세요."
+
+    # 4) 역질문 (“맞지?”)
+    if t in REVERSE_QUESTION:
+        return "네, 제가 말한 내용이 맞습니다."
+
+    # 5) 전화 요청 명령 (“전화해줘”)
+    if t in CALL_REQUEST:
+        return "전화 연결이 필요한 상황입니다. 안내해 주세요."
+    
+    return text  # 기본적으로 원문 반환
+
 
 # 공통 유틸: 텍스트 턴 처리 + 영속화
 def handle_turn_and_persist(
