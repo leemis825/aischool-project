@@ -6,3 +6,6 @@ __pycache__/
 .vscode/
 .idea/
 "@ | Set-Content .gitignore
+# SSH Key 보호
+keys/
+*.pem

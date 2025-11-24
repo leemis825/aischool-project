@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 import requests  # 🔹 네이버 TTS 호출용
-from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse  # 🔹 음성 스트리밍 응답
 from pydantic import BaseModel, Field
@@ -25,6 +25,25 @@ from speaker.stt_whisper import transcribe_bytes
 from brain.minwon_engine import run_pipeline_once  # 민원 엔진
 
 load_dotenv()  # .env 읽어오기
+
+# ============================================================
+# 로깅 설정 (터미널에 로그 폭발용)
+# ============================================================
+
+import logging
+import sys
+
+logger = logging.getLogger("minwon_kiosk")
+logger.setLevel(logging.DEBUG)  # 터미널에 많이 찍히게
+
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter(
+        "[%(asctime)s] [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 # ============================================================
 # 경로 설정: 로그 디렉터리 (사후 분석용)
@@ -73,7 +92,7 @@ NAVER_API_KEY_ID = os.getenv("NAVER_API_KEY_ID")
 NAVER_API_KEY = os.getenv("NAVER_API_KEY")
 
 # 🔹 네이버 TTS API 엔드포인트 (test_tts.py에서 성공한 URL로 맞춰줄 것)
-#NAVER_TTS_URL = "https://naveropenapi.apigw.ntruss.com/voice/v1/tts"
+# NAVER_TTS_URL = "https://naveropenapi.apigw.ntruss.com/voice/v1/tts"
 NAVER_TTS_URL = "https://naveropenapi.apigw.ntruss.com/tts-premium/v1/tts"
 
 # ============================================================
@@ -118,7 +137,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ============================================================
 # 텍스트 모드용 세션 상태 (메모리)
@@ -175,7 +193,6 @@ class TextTurnResponse(BaseModel):
         ),
     )
 
-
 # ============================================================
 # 날씨 / 음력 / 절기 모델
 # ============================================================
@@ -198,7 +215,6 @@ class HeaderStatusResponse(BaseModel):
     date_display: str     # 화면용 날짜 문자열 (예: '2025년 11월 12일 (수)')
     weather: Optional[WeatherInfo] = None
     lunar: Optional[LunarInfo] = None
-
 
 # ============================================================
 # 텍스트 기반 민원 분석 단일 호출 API
@@ -229,13 +245,10 @@ async def analyze_minwon(req: MinwonAnalyzeRequest):
             "staff_payload": None,
         }
 
-    # 지금은 history 비우고 one-shot 으로만 처리
     history: List[Dict[str, str]] = []
 
-    # 민원 엔진 실행
     engine_result = run_pipeline_once(raw_text, history=history)
 
-    # 혹시 엔진에서 None 이나 이상한 값이 돌아올 경우 대비
     if not isinstance(engine_result, dict):
         engine_result = {}
 
@@ -249,7 +262,6 @@ async def analyze_minwon(req: MinwonAnalyzeRequest):
         "staff_payload": staff_payload,
     }
 
-
 # ============================================================
 # 대기 화면용 보조 함수들 (실제 외부 API 연동)
 # ============================================================
@@ -257,7 +269,6 @@ async def analyze_minwon(req: MinwonAnalyzeRequest):
 async def fetch_weather(location: str = "Gwangju") -> WeatherInfo:
     """
     WeatherAPI.com 현재 날씨 조회.
-    location 예: 'Gwangju', 'Seoul', '광주' 등
     """
     if not WEATHER_API_KEY:
         raise RuntimeError("WEATHER_API_KEY 환경변수가 설정되지 않았습니다.")
@@ -289,7 +300,6 @@ async def fetch_weather(location: str = "Gwangju") -> WeatherInfo:
 async def _fetch_lunar_date(today: date) -> str:
     """
     양력 today 기준 음력 날짜(YYYY-MM-DD)를 반환.
-    한국천문연구원 LrsrCldInfoService/getLunCalInfo 사용.
     """
     if not KASI_SERVICE_KEY:
         raise RuntimeError("KASI_SERVICE_KEY 환경변수가 설정되지 않았습니다.")
@@ -321,8 +331,7 @@ async def _fetch_lunar_date(today: date) -> str:
 
 async def _fetch_seasonal_term(today: date) -> str:
     """
-    오늘 날짜에 해당하는 24절기 이름을 반환.
-    없으면 빈 문자열(""). 한국천문연구원 SpcdeInfoService/get24DivisionsInfo 사용.
+    오늘 날짜에 해당하는 24절기 이름을 반환. 없으면 빈 문자열.
     """
     if not KASI_SERVICE_KEY:
         raise RuntimeError("KASI_SERVICE_KEY 환경변수가 설정되지 않았습니다.")
@@ -370,19 +379,18 @@ async def get_lunar_and_seasonal(today: Optional[date] = None) -> LunarInfo:
     try:
         lunar_date = await _fetch_lunar_date(today)
     except Exception as e:
-        print(f"[WARN] Lunar API error: {e}")
+        logger.warning(f"Lunar API error: {e}")
 
     try:
         seasonal_term = await _fetch_seasonal_term(today)
     except Exception as e:
-        print(f"[WARN] Seasonal-term API error: {e}")
+        logger.warning(f"Seasonal-term API error: {e}")
 
     return LunarInfo(
         solar_date=today.isoformat(),
         lunar_date=lunar_date,
         seasonal_term=seasonal_term,
     )
-
 
 # ============================================================
 # 0. 헬스 체크 / 기본 라우트
@@ -397,7 +405,6 @@ async def get_lunar_and_seasonal(today: Optional[date] = None) -> LunarInfo:
 def root():
     return {"message": "간편민원접수 FastAPI 동작 중"}
 
-
 # ============================================================
 # 1. 텍스트 민원 세션 생성
 # ============================================================
@@ -405,15 +412,6 @@ def root():
 @app.post(
     "/api/session/start",
     summary="텍스트 민원 세션 생성",
-    description="""
-텍스트 기반 민원 세션을 하나 생성하고 `session_id`를 반환합니다.
-
-### 사용 예시 (프론트)
-
-1. 키오스크가 '민원을 말씀해 주세요' 화면으로 진입할 때
-2. `/api/session/start`를 호출해 `session_id`를 하나 받는다.
-3. 이후 모든 `/api/minwon/text-turn` 요청에 이 `session_id`를 포함한다.
-""",
     tags=["session"],
 )
 def start_text_session():
@@ -427,7 +425,6 @@ def start_text_session():
 
     return {"session_id": session_id}
 
-
 # ============================================================
 # 2. 텍스트 한 턴 처리 (clarification 결합 포함)
 # ============================================================
@@ -436,22 +433,6 @@ def start_text_session():
     "/api/minwon/text-turn",
     response_model=TextTurnResponse,
     summary="텍스트 한 턴 처리 (민원 분류·안내)",
-    description="""
-한 번에 입력된 민원 텍스트(음성 STT 결과 등)를 분석해
-
-- 민원 카테고리(도로/시설물/연금·복지/심리지원/생활민원/기타)
-- 단순 안내 / 전화 연결 / 공식 민원 접수 필요 여부
-- 주민 안내용 텍스트(user_facing)
-- 담당자용 요약 정보(staff_payload)
-
-를 포함한 JSON을 반환합니다.
-
-### Clarification(추가 질문) 처리
-
-- 직전 턴 결과의 `stage`가 `"clarification"`인 경우,
-  - 이번에 들어온 `text`를 **이전 문장에 '추가 위치 정보: ...' 형태로 붙여서**
-    하나의 문장으로 다시 분석합니다.
-""",
     tags=["minwon"],
 )
 def process_text_turn(body: TextTurnRequest):
@@ -511,7 +492,6 @@ def process_text_turn(body: TextTurnRequest):
         engine_result=engine_result,
     )
 
-
 # ============================================================
 # 로그 조회용 모델 & 유틸
 # ============================================================
@@ -535,17 +515,13 @@ class LogSessionDetailResponse(BaseModel):
 
 def _summarize_log_file(path: Path) -> Optional[LogSessionSummary]:
     """
-    단일 JSONL 로그 파일(한 세션)을 읽어서
-    - 최초/최종 timestamp
-    - 이벤트 개수
-    - 이벤트 타입 목록
-    을 요약해서 반환.
+    단일 JSONL 로그 파일(한 세션)을 읽어서 요약 정보 생성.
     """
     try:
         with path.open("r", encoding="utf-8") as f:
             lines = f.readlines()
     except Exception as e:
-        print(f"[WARN] 로그 파일 읽기 실패: {path} ({e})")
+        logger.warning(f"로그 파일 읽기 실패: {path} ({e})")
         return None
 
     if not lines:
@@ -582,7 +558,6 @@ def _summarize_log_file(path: Path) -> Optional[LogSessionSummary]:
         event_types=event_types,
     )
 
-
 # ============================================================
 #  로그 세션 목록 조회
 # ============================================================
@@ -591,23 +566,9 @@ def _summarize_log_file(path: Path) -> Optional[LogSessionSummary]:
     "/api/logs/sessions",
     response_model=LogSessionListResponse,
     summary="로그 세션 목록 조회",
-    description="""
-백엔드에서 기록한 JSONL 로그 파일을 기반으로
-
-- 최근 세션 ID 목록
-- 각 세션의 최초/최종 이벤트 시간
-- 이벤트 개수
-- 이벤트 타입 목록
-
-을 요약해서 반환합니다.
-
-발표용/모니터링용 뷰에서
-'백엔드가 어떤 세션들을 처리했는지' 목록을 보여줄 때 사용합니다.
-""",
     tags=["logs"],
 )
 def list_log_sessions(limit: int = 20):
-    # 로그 디렉터리 내의 .jsonl 파일들을 최근 수정시간 기준으로 정렬
     files = sorted(
         LOG_DIR.glob("*.jsonl"),
         key=lambda p: p.stat().st_mtime,
@@ -622,7 +583,6 @@ def list_log_sessions(limit: int = 20):
 
     return LogSessionListResponse(sessions=summaries)
 
-
 # ============================================================
 #  특정 세션 로그 상세 조회
 # ============================================================
@@ -631,15 +591,6 @@ def list_log_sessions(limit: int = 20):
     "/api/logs/{session_id}",
     response_model=LogSessionDetailResponse,
     summary="특정 세션 로그 상세 조회",
-    description="""
-주어진 `session_id`에 해당하는 JSONL 로그 파일을 읽어서
-
-- 각 이벤트 레코드(타임스탬프, 타입, 입력 텍스트, 엔진 결과 등)를
-  그대로 배열로 반환합니다.
-
-프론트에서는 이 데이터를 기반으로
-타임라인/테이블 형태로 '백엔드 내부 처리 흐름'을 시각화할 수 있습니다.
-""",
     tags=["logs"],
 )
 def get_log_session_detail(session_id: str, max_events: int = 200):
@@ -669,7 +620,6 @@ def get_log_session_detail(session_id: str, max_events: int = 200):
         events=events,
     )
 
-
 # ============================================================
 # 3. 대기 화면용 헤더 정보 API
 # ============================================================
@@ -678,18 +628,6 @@ def get_log_session_detail(session_id: str, max_events: int = 200):
     "/api/status/header",
     response_model=HeaderStatusResponse,
     summary="대기 화면용 헤더 정보(시간/날짜/날씨/음력/절기)",
-    description="""
-키오스크 대기 화면 상단에 표시할
-
-- 현재 시간/날짜
-- 날씨
-- 음력 날짜
-- 절기
-
-정보를 반환합니다.
-
-민원 대화와는 별개로, 대기 화면에서만 주기적으로 호출하면 됩니다.
-""",
     tags=["status"],
 )
 async def get_header_status(location: str = "Gwangju"):
@@ -702,12 +640,12 @@ async def get_header_status(location: str = "Gwangju"):
     try:
         weather = await fetch_weather(location)
     except Exception as e:
-        print(f"[WARN] Weather API error: {e}")
+        logger.warning(f"Weather API error: {e}")
 
     try:
         lunar = await get_lunar_and_seasonal(now.date())
     except Exception as e:
-        print(f"[WARN] Lunar/Seasonal API error: {e}")
+        logger.warning(f"Lunar/Seasonal API error: {e}")
 
     return HeaderStatusResponse(
         now_iso=now.isoformat(),
@@ -715,7 +653,6 @@ async def get_header_status(location: str = "Gwangju"):
         weather=weather,
         lunar=lunar,
     )
-
 
 # ============================================================
 # 다국어 STT + 언어 감지 + 번역 유틸 함수
@@ -727,7 +664,7 @@ def stt_multilang_bytes(audio_bytes: bytes, file_name: str = "recording.webm") -
     언어 자동 감지 + 텍스트 변환을 수행한다.
     """
     if not audio_bytes:
-        print("[WARN] stt_multilang_bytes에 빈 바이트가 전달되었습니다.")
+        logger.warning("[WARN] stt_multilang_bytes에 빈 바이트가 전달되었습니다.")
         return ""
 
     bio = io.BytesIO(audio_bytes)
@@ -748,7 +685,7 @@ def stt_multilang_bytes(audio_bytes: bytes, file_name: str = "recording.webm") -
         text = getattr(resp, "text", "") or str(resp)
         return text.strip()
     except Exception as e:
-        print(f"[WARN] Whisper multilang STT 호출 중 오류 발생: {e}")
+        logger.warning(f"Whisper multilang STT 호출 중 오류 발생: {e}")
         return ""
 
 
@@ -785,7 +722,7 @@ def detect_language(text: str) -> str:
 
         return (code[:2] or "ko")
     except Exception as e:
-        print(f"[WARN] 언어 감지 중 오류 발생: {e}")
+        logger.warning(f"언어 감지 중 오류 발생: {e}")
         return "ko"
 
 
@@ -815,9 +752,8 @@ def translate_text(text: str, target_lang: str) -> str:
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
-        print(f"[WARN] 번역 중 오류 발생: {e}")
+        logger.warning(f"번역 중 오류 발생: {e}")
         return text
-
 
 # ============================================================
 # 4. 음성(STT) + 민원 엔진 한 번에 처리 (한국어 전용)
@@ -826,26 +762,21 @@ def translate_text(text: str, target_lang: str) -> str:
 @app.post(
     "/stt",
     summary="음성 파일(STT) + 민원 엔진 한 번에 처리 (한국어 전용)",
-    description=(
-        "프론트에서 녹음한 음성 파일(webm/mp3 등)을 업로드하면\n\n"
-        "1. OpenAI Whisper를 사용해 STT (음성 → 텍스트, language='ko')\n"
-        "2. 변환된 텍스트를 민원 엔진(run_pipeline_once)에 넣어 분류/요약\n\n"
-        "까지 한 번에 처리하여 결과를 반환합니다."
-    ),
     tags=["stt", "minwon"],
 )
 async def stt_and_minwon(request: Request):
     """
     - FormData로 올 때는 `audio` 또는 `file` 필드 이름을 사용한다고 가정
-    - FastAPI의 UploadFile 파라미터(File(...))를 시그니처에서 빼고,
-      request.form() 으로 직접 파싱해서 422 문제를 피한다.
+    - request.form() 으로 직접 파싱해서 422 문제를 피한다.
     """
+    logger.info("=== 🟦 STT 요청 도착 ===")
 
     # 1) multipart/form-data 파싱
     try:
         form = await request.form()
+        logger.debug(f"[폼 파싱 성공] fields={list(form.keys())}")
     except Exception as e:
-        # 아예 multipart 자체가 아니거나, 파싱이 안 될 때
+        logger.error(f"[폼 파싱 실패] {e}")
         raise HTTPException(
             status_code=400,
             detail=f"폼 데이터를 읽는 중 오류가 발생했습니다: {e}",
@@ -855,7 +786,7 @@ async def stt_and_minwon(request: Request):
     upload = form.get("audio") or form.get("file")
 
     if upload is None:
-        # 파일 필드 자체가 없을 때
+        logger.error("폼 데이터에 'audio' 또는 'file' 필드가 없습니다.")
         raise HTTPException(
             status_code=400,
             detail="폼 데이터에 'audio' 또는 'file' 필드가 없습니다.",
@@ -863,21 +794,27 @@ async def stt_and_minwon(request: Request):
 
     # form.get(...) 결과가 UploadFile 이 아닌 경우 방어
     if not hasattr(upload, "filename") or not hasattr(upload, "read"):
+        logger.error("업로드된 파일 형식을 인식할 수 없습니다.")
         raise HTTPException(
             status_code=400,
             detail="업로드된 파일 형식을 인식할 수 없습니다.",
         )
 
+    logger.info(f"[업로드 파일] {getattr(upload, 'filename', None)}")
+
     # 3) 실제 바이너리 읽기
     try:
         audio_bytes = await upload.read()
+        logger.debug(f"[바이트 크기] {len(audio_bytes)} bytes")
     except Exception as e:
+        logger.error(f"업로드된 파일을 읽는 중 오류: {e}")
         raise HTTPException(
             status_code=400,
             detail=f"업로드된 파일을 읽는 중 오류가 발생했습니다: {e}",
         )
 
     if not audio_bytes:
+        logger.error("비어 있는 오디오 파일입니다.")
         raise HTTPException(status_code=400, detail="비어 있는 오디오 파일입니다.")
 
     filename = upload.filename or "recording.webm"
@@ -888,9 +825,11 @@ async def stt_and_minwon(request: Request):
         language="ko",
         file_name=filename,
     )
+    logger.info(f"[STT 결과] {text}")
 
     # STT 실패
     if not text:
+        logger.warning("STT 결과가 비어 있습니다. 엔진 호출 없이 응답 반환.")
         return {
             "session_id": None,
             "text": "",
@@ -902,9 +841,12 @@ async def stt_and_minwon(request: Request):
     # 5) 민원 엔진 1회성 실행
     history: List[Dict[str, str]] = []
     engine_result = run_pipeline_once(text, history)
+    logger.info("[엔진 결과]\n" + json.dumps(engine_result, ensure_ascii=False, indent=2))
 
     # 6) 1회성 session_id 생성 (로그용)
     session_id = str(uuid.uuid4())
+    logger.info(f"[세션 생성] {session_id}")
+
     log_event(
         session_id,
         {
@@ -915,6 +857,8 @@ async def stt_and_minwon(request: Request):
         },
     )
 
+    logger.info("=== 🟩 STT 응답 완료 ===\n")
+
     # 7) 응답 구조
     return {
         "session_id": session_id,
@@ -924,18 +868,16 @@ async def stt_and_minwon(request: Request):
         "staff_payload": engine_result.get("staff_payload", {}),
     }
 
+# ============================================================
+# TTS 요청 모델 & 엔드포인트
+# ============================================================
 
 class TtsRequest(BaseModel):
     text: str  # 읽어 줄 문장
 
-
 @app.post(
     "/tts",
     summary="네이버 CLOVA Voice TTS (텍스트 → 음성)",
-    description=(
-        "텍스트를 받아 네이버 CLOVA Voice API를 호출해 MP3 음성으로 변환합니다.\n"
-        "프론트에서는 blob으로 받아 <audio> 태그로 재생하면 됩니다."
-    ),
     tags=["tts"],
 )
 def tts(req: TtsRequest):
@@ -949,7 +891,6 @@ def tts(req: TtsRequest):
     if not text:
         raise HTTPException(status_code=400, detail="text 파라미터가 비어 있습니다.")
 
-    # 🔹 test_tts.py와 동일한 방식으로 호출
     headers = {
         "X-NCP-APIGW-API-KEY-ID": NAVER_API_KEY_ID,
         "X-NCP-APIGW-API-KEY": NAVER_API_KEY,
@@ -984,14 +925,6 @@ def tts(req: TtsRequest):
 @app.post(
     "/stt/multilang",
     summary="다국어 음성(STT) + 민원 엔진 처리 (원어 응답 포함)",
-    description=(
-        "프론트에서 녹음한 음성 파일(webm/mp3 등)을 업로드하면\n\n"
-        "1. Whisper 다국어 STT (언어 자동 감지, 음성 → 원문 텍스트)\n"
-        "2. 텍스트 언어 감지(ko/en/ja/…)\n"
-        "3. 한국어로 번역해서 민원 엔진(run_pipeline_once)에 넣고 분류/요약\n"
-        "4. 주민 안내 멘트(user_facing)를 다시 원래 언어로 번역해서 반환\n\n"
-        "까지 한 번에 처리합니다."
-    ),
     tags=["stt", "minwon"],
 )
 async def stt_and_minwon_multilang(request: Request):
@@ -1089,7 +1022,6 @@ async def stt_and_minwon_multilang(request: Request):
         "user_facing_for_user": user_facing_for_user,
         "staff_payload": staff_payload,
     }
-
 
 # ============================================================
 # uvicorn 실행용 엔트리포인트
