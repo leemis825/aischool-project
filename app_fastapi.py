@@ -209,6 +209,30 @@ def ensure_session(session_id: Optional[str], source: str) -> str:
 
     return sid
 
+AFFIRMATIVE_SHORTS = ["응", "네", "그래", "그래요", "맞아", "맞아요", "ㅇㅇ", "ㅇㅋ", "예", "웅"]
+
+def expand_short_affirmative(text: str, last_stage: Optional[str]) -> str:
+    """
+    사용자가 '응/네/그래요' 같은 단답을 입력했을 때
+    직전 엔진 stage에 따라 의미를 확장해서 반환.
+    """
+    t = text.strip()
+    if t not in AFFIRMATIVE_SHORTS:
+        return text  # 단답이 아니면 그대로 사용
+
+    # 단답일 때 stage별 의미 확장
+    if last_stage == "clarification":
+        return "네, 제가 말한 내용이 맞습니다. 계속 이어서 처리해 주세요."
+    elif last_stage == "guide":
+        return "네, 안내해 주신 내용 이해했습니다."
+    elif last_stage == "handoff":
+        return "네, 안내해 주신 절차대로 진행하겠습니다."
+    elif last_stage == "classification":
+        return "네, 상황을 조금 더 설명드릴게요."
+    else:
+        # stage가 없는 경우(첫 턴 등)
+        return "네, 계속 진행해 주세요."
+
 # 공통 유틸: 텍스트 턴 처리 + 영속화
 def handle_turn_and_persist(
     session_id: str,
@@ -216,10 +240,17 @@ def handle_turn_and_persist(
     text_for_engine: str,        # 엔진에 넣을 텍스트(ko)
     source: str,
 ):
-    session = TEXT_SESSIONS[session_id]
-    history = session["history"]
+    # 🔹 직전 stage 가져오기
+    session = TEXT_SESSIONS.get(session_id, {})
+    history = session.get("history", [])
+    last_stage = None
+    if history and "engine_result" in session:
+        last_stage = session["engine_result"].get("stage")
     pending = session["pending_clarification"]
     db_session_id = session["db_session_id"]
+    
+    # 🔹 단답 확장
+    original_text = expand_short_affirmative(original_text, last_stage)
 
     # clarification 결합 규칙(텍스트 턴과 동일)
     if pending is not None:
