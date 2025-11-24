@@ -226,15 +226,15 @@ def expand_short_affirmative(text: str, last_stage: Optional[str]) -> str:
 
     # 1) 기존 단답 처리
     if t in AFFIRMATIVE_SHORTS:
-        if last_stage == "clarification":
-            return "네, 제가 말한 내용이 맞습니다. 계속 이어서 처리해 주세요."
-        elif last_stage == "guide":
-            return "네, 안내해 주신 내용 이해했습니다."
-        elif last_stage == "handoff":
-            return "네, 안내해 주신 절차대로 진행하겠습니다."
-        elif last_stage == "classification":
-            return "네, 상황을 조금 더 설명드릴게요."
-        else:
+        # if last_stage == "clarification":
+        #     return "네, 제가 말한 내용이 맞습니다. 계속 이어서 처리해 주세요."
+        # elif last_stage == "guide":
+        #     return "네, 안내해 주신 내용 이해했습니다."
+        # elif last_stage == "handoff":
+        #     return "네, 안내해 주신 절차대로 진행하겠습니다."
+        # elif last_stage == "classification":
+        #     return "네, 상황을 조금 더 설명드릴게요."
+        # else:
             return "네, 계속 진행해 주세요."
 
     # 2) 머뭇거림 처리 (“음…”, “아…”)
@@ -266,23 +266,89 @@ def handle_turn_and_persist(
     # 🔹 직전 stage 가져오기
     session = TEXT_SESSIONS.get(session_id, {})
     history = session.get("history", [])
-    last_stage = None
-    if history and "engine_result" in session:
-        last_stage = session["engine_result"].get("stage")
+    last_engine_result = session.get("engine_result")  # ✅ 이전 결과 가져오기
+
+    # ✅ 이전 stage 확인
+    last_stage = last_engine_result.get("stage") if last_engine_result else None
     pending = session["pending_clarification"]
     db_session_id = session["db_session_id"]
     
     # 🔹 단답 확장
-    original_text = expand_short_affirmative(original_text, last_stage)
+    expanded_text = expand_short_affirmative(original_text, last_stage)
 
-    # clarification 결합 규칙(텍스트 턴과 동일)
+    # ✅ **핵심: handoff 상태에서 긍정 단답이 들어오면 민원 접수 완료 처리**
+    if last_stage == "handoff" and original_text.strip() in AFFIRMATIVE_SHORTS:
+        # (1) 사용자 메시지 저장
+        insert_chat_message(db_session_id, sender="senior", message=original_text)
+        
+        # (2) 민원 접수 완료 상태로 변경
+        last_engine_result["stage"] = "completed"  # ✅ 새로운 stage
+        last_engine_result["user_facing"]["main_message"] = "민원 접수가 완료되었습니다. 담당자가 확인 후 연락드리겠습니다."
+        last_engine_result["user_facing"]["next_action_guide"] = ""
+        last_engine_result["user_facing"]["phone_suggestion"] = ""
+        last_engine_result["user_facing"]["confirm_question"] = ""
+        
+        # (3) 봇 응답 저장
+        bot_text = last_engine_result["user_facing"]["main_message"]
+        insert_chat_message(db_session_id, sender="bot", message=bot_text)
+        
+        # (4) DB 업데이트 (stage만 변경)
+        update_chat_session_from_engine(
+            db_session_id,
+            engine_result=last_engine_result,
+            original_text=original_text,
+        )
+        
+        # (5) 세션 저장
+        history.append({"role": "user", "content": original_text})
+        session["engine_result"] = last_engine_result
+        session["history"] = history
+        TEXT_SESSIONS[session_id] = session
+        
+        # (6) 로그
+        log_event(session_id, {
+            "type": "completion",
+            "source": source,
+            "input_text": original_text,
+            "final_stage": "completed",
+            "db_session_id": db_session_id,
+        })
+        
+        return last_engine_result, original_text  # ✅ 기존 결과 재사용
+
+    # clarification 결합 규칙
     if pending is not None:
         prev_text = pending["original_text"]
-        used_text_for_engine = f"{prev_text} 추가 위치 정보: {text_for_engine}"
-        used_text_for_user   = f"{prev_text} 추가 위치 정보: {original_text}"
+        # 단답일 경우 엔진 입력에 포함시키지 않음
+        if original_text.strip() in AFFIRMATIVE_SHORTS:
+            used_text_for_engine = prev_text
+        else:
+            used_text_for_engine = f"{prev_text} 추가 위치 정보: {original_text}"
+
+        used_text_for_user = f"{prev_text} 추가 위치 정보: {expanded_text}"
     else:
-        used_text_for_engine = text_for_engine
-        used_text_for_user   = original_text
+        # 단답이면 엔진 입력으로 보내지 않고 이전 문장을 재사용
+        if original_text.strip() in AFFIRMATIVE_SHORTS and len(history) > 0:
+            used_text_for_engine = history[-1]["content"]
+        else:
+            used_text_for_engine = original_text
+
+        used_text_for_user = expanded_text
+
+    # =======================================
+    # 🔥 자연스러운 맥락 연결 (엔진이 이해할 수 있는 자연문 형태)
+    # =======================================
+    # 단답은 연결 금지 (의도 없음)
+    if original_text.strip() not in AFFIRMATIVE_SHORTS:
+        if len(history) > 0:
+            prev_user_raw = history[-1]["content"]
+            if prev_user_raw and prev_user_raw != original_text:
+                # 자연어 맥락 결합
+                used_text_for_engine = f"{prev_user_raw} 그리고 {original_text}"
+        # else: 첫 발화는 그대로 사용
+        else:
+            used_text_for_engine = original_text
+
 
     # (1) 사용자 메시지 저장
     insert_chat_message(db_session_id, sender="senior", message=used_text_for_user)
@@ -322,6 +388,11 @@ def handle_turn_and_persist(
         engine_result=engine_result,
         original_text=used_text_for_user,
     )
+
+    # 세션 스냅샷 저장
+    session["engine_result"] = engine_result
+    session["history"] = history
+    TEXT_SESSIONS[session_id] = session
 
     # (5) 로그
     log_event(session_id, {

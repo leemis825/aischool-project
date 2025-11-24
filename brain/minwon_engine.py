@@ -4,7 +4,7 @@
 
 리턴 스키마:
 {
-  "stage": "classification" | "guide" | "handoff" | "clarification",
+  "stage": "classification" | "guide" | "handoff" | "clarification" | "completed",
   "minwon_type": "도로" | "시설물" | "연금/복지" | "심리지원" | "생활민원" | "기타",
   "handling_type": "simple_guide" | "contact_only" | "official_ticket",
   "need_call_transfer": bool,
@@ -50,6 +50,39 @@ client = OpenAI(api_key=API_KEY)
 MODEL = "gpt-4o"
 TEMP_GLOBAL = 0.2      # 요약/멘트/라우팅 등
 TEMP_CLASSIFIER = 0.0  # 분류/출동 여부 판단 (결정적)
+
+
+# -------------------- 위치(주소) 규칙 추출 --------------------
+# LLM이 location을 못 뽑을 때를 대비한 1차 규칙 기반 추출
+ADDRESS_PATTERNS = [
+    # 시/도  구/군/시  동/읍/면/리  번지/숫자
+    r"(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)\s*[^\s](시|군|구)\s*[^\s](동|읍|면|리)?\s*\d{1,4}(-\d{1,4})?(번지)?",
+    # 구/군/시  동/읍/면/리  숫자
+    r"[^\s](구|군|시)\s*[^\s](동|읍|면|리)\s*\d{1,4}(-\d{1,4})?(번지)?",
+    # 도로명 주소
+    r"[^\s](로|길)\s*\d{1,4}(-\d{1,4})?",
+    # 지번 단순 패턴
+    r"\d{1,4}가\s*\d{1,4}번지",
+    # 랜드마크(아파트/마을회관 등)  앞/근처
+    r"[^\s](아파트|빌라|주공|마을회관|경로당|초등학교|중학교|고등학교|사거리|교차로)\s*(앞|근처|옆)?",
+    
+    # ✅ "강남구 역삼동 123-1" 같은 구+동+번지 패턴 추가
+    r"[가-힣]{1,5}(구|군)\s*[가-힣]{1,5}(동|읍|면|리)\s*\d{1,4}(-\d{1,4})?",
+    
+    # ✅ "서울 강남구 역삼동" 같은 시+구+동 패턴
+    r"(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)\s*[가-힣]{1,5}(구|군|시)\s*[가-힣]{1,5}(동|읍|면|리)",
+    
+    # ✅ 번지만 있는 경우도 포착
+    r"\d{1,4}-\d{1,4}(번지)?",
+]
+
+def extract_location_rule(text: str) -> str:
+    t = text.strip()
+    for pat in ADDRESS_PATTERNS:
+        m = re.search(pat, t)
+        if m:
+            return m.group(0).strip()
+    return ""
 
 
 # -------------------- 카테고리 / 부서 매핑 --------------------
@@ -772,12 +805,17 @@ def need_clarification(summary_data: Dict[str, Any],
 
     # 동/리/길/골목/아파트/마을회관/집앞/대문 같은 표현이 있는지
     has_location_like_word = bool(
-        re.search(r"(동|리|길|로|대로|골목|아파트|마을회관|집앞|대문)", t)
+        re.search(r"(동|리|길|로|대로|골목|아파트|마을회관|집앞|대문|구|군|시|번지|\d+-\d+)", t)
     )
 
     # 이미 추가 위치 정보를 한 번 이상 받고,
     # 그 안에 구체적인 위치 표현이 있으면 → 더 이상 clarification 하지 않음
     if has_additional_marker and has_location_like_word:
+        return False
+
+    # ✅ 추가 마커가 없어도, 위치 표현이 충분히 구체적이면 질문 생략
+    # (예: "강남구 역삼동 123-1"처럼 구+동+번지가 모두 있는 경우)
+    if re.search(r"[가-힣]{1,5}(구|군)\s*[가-힣]{1,5}(동|읍|면|리)\s*\d{1,4}(-\d{1,4})?", t):
         return False
 
     # 그 외에는 한 번 더 물어본다.
@@ -886,6 +924,22 @@ def run_pipeline_once(user_text: str,
 
     # 3) Summarizer
     summary_data = summarize_for_staff(text, category)
+    # ✅ LLM이 location을 못 뽑았으면 규칙 기반으로 보강
+    if not (summary_data.get("location") or "").strip():
+        rule_loc = extract_location_rule(text)
+        if rule_loc:
+            summary_data["location"] = rule_loc
+            print(f"[DEBUG] 규칙 기반 위치 추출 성공: {rule_loc}")  # 디버깅용
+    
+    # ✅ 위치 정보가 충분한지 다시 한번 확인
+    # (LLM이 못 뽑았어도 텍스트에 명확히 있으면 clarification 생략)
+    if not summary_data.get("location"):
+        # 텍스트에서 한 번 더 찾아보기
+        t = text.replace(" ", "")
+        if re.search(r"[가-힣]{1,5}(구|군)\s*[가-힣]{1,5}(동|읍|면|리)\s*\d{1,4}(-\d{1,4})?", text):
+            # 패턴은 매칭되는데 extract_location_rule이 못 잡았다면
+            # 최소한 "위치 정보 포함됨" 표시
+            summary_data["location"] = "위치 정보 포함 (상세 주소 재확인 필요)" 
 
     # 4) Clarification 필요 여부
     if need_clarification(summary_data, category, text):
