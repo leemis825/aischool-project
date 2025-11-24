@@ -1,11 +1,22 @@
-# .gitignore 파일 생성 (있으면 덮어씀)
-PS C:\school> @"
-.env
-.env.*
+# Python
 __pycache__/
-.vscode/
-.idea/
-"@ | Set-Content .gitignore
-# SSH Key 보호
+*.pyc
+
+# Environment files
+.env
+*.env
+
+# Keys / Secrets
 keys/
+*.key
 *.pem
+*.json
+
+# Audio uploads
+uploads/
+*.mp3
+*.wav
+
+# OS / Editor
+.DS_Store
+.vscode/
