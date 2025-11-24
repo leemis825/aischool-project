@@ -7,9 +7,7 @@ import os
 import io
 import urllib.request
 import urllib.parse
-import pymysql
 
-from contextlib import contextmanager
 from datetime import datetime, date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -27,165 +25,6 @@ from speaker.stt_whisper import transcribe_bytes
 from brain.minwon_engine import run_pipeline_once  # 민원 엔진
 
 load_dotenv()  # .env 읽어오기
-
-# ============================================================
-# MySQL 연결 설정 (최소 수정 버전: pymysql)
-# ============================================================
-
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST"),
-    "port": int(os.getenv("DB_PORT", "3306")),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    "db": os.getenv("DB_NAME", "complaint"),
-    "charset": os.getenv("DB_CHARSET", "utf8mb4"),
-    "cursorclass": pymysql.cursors.DictCursor,
-    "autocommit": True,
-}
-
-def get_db_conn():
-    return pymysql.connect(**DB_CONFIG)
-
-@contextmanager
-def db_cursor():
-    conn = get_db_conn()
-    try:
-        with conn.cursor() as cur:
-            yield cur
-    finally:
-        conn.close()
-
-
-def insert_chat_session_initial() -> int:
-    """session 시작 시 빈 row 생성 후 id 반환"""
-    sql = """
-    INSERT INTO chat_session (
-        stage, minwon_type, handling_type,
-        summary, phone_suggestion, phone,
-        confirm_question, location,
-        risk_level, needs_visit,
-        citizen_request, raw_keywords, memo_for_staff
-    ) VALUES (
-        NULL, NULL, NULL,
-        NULL, NULL, NULL,
-        NULL, NULL,
-        NULL, NULL,
-        NULL, NULL, NULL
-    )
-    """
-    with db_cursor() as cur:
-        cur.execute(sql)
-        return cur.lastrowid
-
-
-def insert_chat_message(session_id: int, sender: str, message: str) -> int:
-    sql = """
-    INSERT INTO chat_message (session_id, sender, message)
-    VALUES (%s, %s, %s)
-    """
-    with db_cursor() as cur:
-        cur.execute(sql, (session_id, sender, message))
-        return cur.lastrowid
-
-
-def update_chat_session_from_engine(
-    session_id: int,
-    engine_result: Dict[str, Any],
-    original_text: str,
-):
-
-
-    user_facing = engine_result.get("user_facing") or {}
-    staff_payload = engine_result.get("staff_payload") or {}
-
-    # 값 변환 유틸
-    def _to_scalar(v):
-        if v is None:
-            return None
-        if isinstance(v, (str, int, float)):
-            return v
-        if isinstance(v, bool):
-            return 1 if v else 0
-        # list/dict/tuple 등은 JSON 문자열로 저장
-        if isinstance(v, (list, dict, tuple)):
-            return json.dumps(v, ensure_ascii=False)
-        return str(v)
-
-
-    # needs_visit -> tinyint(1/0 or NULL)
-    nv = staff_payload.get("needs_visit")
-    if isinstance(nv, bool):
-        needs_visit_val = 1 if nv else 0
-    elif nv in (0, 1):
-        needs_visit_val = nv
-    else:
-        needs_visit_val = None
-
-    raw_keywords_val = staff_payload.get("raw_keywords")
-
-    # 1) raw_keywords가 list이면 → 콤마로 join
-    if isinstance(raw_keywords_val, list):
-        raw_keywords_val = ",".join([str(x).strip() for x in raw_keywords_val if x])
-
-    # 2) raw_keywords가 문자열이면 → strip
-    elif isinstance(raw_keywords_val, str):
-        raw_keywords_val = raw_keywords_val.strip()
-
-    # 3) raw_keywords가 비어있으면 keywords를 fallback으로 사용
-    else:
-        kws = staff_payload.get("keywords")
-        if isinstance(kws, list):
-            raw_keywords_val = ",".join([str(x).strip() for x in kws if x])
-        elif isinstance(kws, str):
-            raw_keywords_val = kws.strip()
-        else:
-            raw_keywords_val = None
-
-    sql = """
-    UPDATE chat_session
-    SET
-        stage=%s,
-        minwon_type=%s,
-        handling_type=%s,
-        summary=%s,
-        phone_suggestion=%s,
-        phone=%s,
-        confirm_question=%s,
-        location=%s,
-        risk_level=%s,
-        needs_visit=%s,
-        citizen_request=%s,
-        raw_keywords=%s,
-        memo_for_staff=%s
-    WHERE id=%s
-    """
-
-    params = (
-        _to_scalar(engine_result.get("stage")),
-        _to_scalar(engine_result.get("minwon_type")),
-        _to_scalar(engine_result.get("handling_type")),
-
-        _to_scalar(staff_payload.get("summary") or engine_result.get("summary")),
-        _to_scalar(user_facing.get("phone_suggestion")),
-        _to_scalar(user_facing.get("phone")),
-
-        _to_scalar(user_facing.get("confirm_question")),
-        _to_scalar(staff_payload.get("location") or engine_result.get("location")),
-
-        _to_scalar(staff_payload.get("risk_level")),
-        _to_scalar(needs_visit_val),
-
-        _to_scalar(staff_payload.get("citizen_request") or original_text),
-        _to_scalar(raw_keywords_val),
-        _to_scalar(staff_payload.get("memo_for_staff")),
-
-        session_id,
-    )    
-
-    with db_cursor() as cur:
-        cur.execute(sql, params)
-
-
 
 # ============================================================
 # 경로 설정: 로그 디렉터리 (사후 분석용)
@@ -579,18 +418,14 @@ def root():
 )
 def start_text_session():
     session_id = str(uuid.uuid4())
-
-    # DB에 세션 row 생성
-    db_session_id = insert_chat_session_initial()
-
     TEXT_SESSIONS[session_id] = {
         "history": [],
         "pending_clarification": None,
-        "db_session_id": db_session_id,   # 🔹 추가
     }
 
-    log_event(session_id, {"type": "session_start", "source": "api", "db_session_id": db_session_id})
-    return {"session_id": session_id, "db_session_id": db_session_id}
+    log_event(session_id, {"type": "session_start", "source": "api"})
+
+    return {"session_id": session_id}
 
 
 # ============================================================
@@ -620,77 +455,61 @@ def start_text_session():
     tags=["minwon"],
 )
 def process_text_turn(body: TextTurnRequest):
+    # 1) 세션 준비
     session_id = body.session_id or str(uuid.uuid4())
 
     if session_id not in TEXT_SESSIONS:
-        db_session_id = insert_chat_session_initial()  # 🔹 암묵적 세션도 DB 생성
         TEXT_SESSIONS[session_id] = {
             "history": [],
             "pending_clarification": None,
-            "db_session_id": db_session_id,
         }
-        log_event(session_id, {"type": "session_start", "source": "implicit_by_text_turn", "db_session_id": db_session_id})
+        log_event(
+            session_id,
+            {"type": "session_start", "source": "implicit_by_text_turn"},
+        )
 
     session = TEXT_SESSIONS[session_id]
-    history = session["history"]
+    history: List[Dict[str, str]] = session["history"]
     pending = session["pending_clarification"]
-    db_session_id = session["db_session_id"]
 
     original_text = body.text.strip()
 
+    # 2) clarification 결합 처리
     if pending is not None:
         prev_text = pending["original_text"]
         use_text = f"{prev_text} 추가 위치 정보: {original_text}"
     else:
         use_text = original_text
 
-    # 🔹 (1) 사용자 메시지 저장
-    insert_chat_message(db_session_id, sender="senior", message=use_text)
-
+    # 3) 민원 엔진 호출
     engine_result = run_pipeline_once(use_text, history)
 
+    # 4) history 업데이트
     history.append({"role": "user", "content": use_text})
 
+    # 5) clarification 상태 업데이트
     if engine_result.get("stage") == "clarification":
         session["pending_clarification"] = {"original_text": use_text}
     else:
         session["pending_clarification"] = None
 
-    # 🔹 (2) 봇 메시지 저장
-    # user_facing이 dict라면 화면에 실제 보여줄 대표 문장만 이어붙이거나,
-    # 일단 JSON 문자열로 저장하는 방식이 안전함.
-    bot_text = ""
-    uf = engine_result.get("user_facing")
-    if isinstance(uf, dict):
-        # 키 순서대로 합쳐 저장 (최소 가정)
-        bot_text = " ".join([str(v) for v in uf.values() if isinstance(v, str)])
-    else:
-        bot_text = str(uf) if uf else ""
-
-    if bot_text:
-        insert_chat_message(db_session_id, sender="bot", message=bot_text)
-
-    # 🔹 (3) 세션 snapshot 업데이트
-    update_chat_session_from_engine(
-        db_session_id,
-        engine_result=engine_result,
-        original_text=use_text,
+    # 6) 로그 기록 (사후 분석용)
+    log_event(
+        session_id,
+        {
+            "type": "text_turn",
+            "input_text": original_text,
+            "used_text": use_text,
+            "engine_result": engine_result,
+        },
     )
 
-    log_event(session_id, {
-        "type": "text_turn",
-        "input_text": original_text,
-        "used_text": use_text,
-        "engine_result": engine_result,
-        "db_session_id": db_session_id,
-    })
-
+    # 7) 응답
     return TextTurnResponse(
         session_id=session_id,
         used_text=use_text,
         engine_result=engine_result,
     )
-
 
 
 # ============================================================
@@ -1084,21 +903,6 @@ async def stt_and_minwon(request: Request):
     history: List[Dict[str, str]] = []
     engine_result = run_pipeline_once(text, history)
 
-    # 🔹 DB 저장 (단발 세션)
-    db_session_id = insert_chat_session_initial()
-    insert_chat_message(db_session_id, "senior", text)
-
-    bot_text = ""
-    uf = engine_result.get("user_facing")
-    if isinstance(uf, dict):
-        bot_text = " ".join([str(v) for v in uf.values() if isinstance(v, str)])
-    else:
-        bot_text = str(uf) if uf else ""
-    if bot_text:
-        insert_chat_message(db_session_id, "bot", bot_text)
-
-    update_chat_session_from_engine(db_session_id, engine_result, original_text=text)
-
     # 6) 1회성 session_id 생성 (로그용)
     session_id = str(uuid.uuid4())
     log_event(
@@ -1114,7 +918,6 @@ async def stt_and_minwon(request: Request):
     # 7) 응답 구조
     return {
         "session_id": session_id,
-        "db_session_id": db_session_id,
         "text": text,  # 프론트 ListeningPage에서 data.text 로 사용
         "engine_result": engine_result,
         "user_facing": engine_result.get("user_facing", {}),
@@ -1263,22 +1066,6 @@ async def stt_and_minwon_multilang(request: Request):
             else:
                 user_facing_for_user[key] = value
 
-    # 🔹 DB 저장 (단발 세션)
-    db_session_id = insert_chat_session_initial()
-    insert_chat_message(db_session_id, "senior", original_text)
-
-    # user_facing_for_user가 dict면 합쳐서 저장
-    bot_text = ""
-    if isinstance(user_facing_for_user, dict):
-        bot_text = " ".join([str(v) for v in user_facing_for_user.values() if isinstance(v, str)])
-    else:
-        bot_text = str(user_facing_for_user) if user_facing_for_user else ""
-    if bot_text:
-        insert_chat_message(db_session_id, "bot", bot_text)
-
-    update_chat_session_from_engine(db_session_id, engine_result, original_text=text_for_engine)
-
-
     # 6) 세션/로그 기록
     session_id = str(uuid.uuid4())
     log_event(
@@ -1295,7 +1082,6 @@ async def stt_and_minwon_multilang(request: Request):
 
     return {
         "session_id": session_id,
-        "db_session_id": db_session_id,
         "original_lang": lang,
         "original_text": original_text,
         "engine_input_ko": text_for_engine,
