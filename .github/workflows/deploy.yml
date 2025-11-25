@@ -41,7 +41,7 @@ jobs:
     # 6) 서버에 접속해서 pull + 컨테이너 재시작
     - name: Deploy to NCP Server
       run: |
-        ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << 'EOF'
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon-kiosk-key.pem root@${{ secrets.SERVER_IP }} << 'EOF'
           # 최신 이미지 pull
           docker pull ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME }}:latest
 
