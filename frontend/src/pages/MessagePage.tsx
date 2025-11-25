@@ -1,23 +1,29 @@
 import { useNavigate } from "react-router-dom";
-import PlusLayout from "../components/PlusLayout.js";
+import Layout from "../components/Layout.js";
+import BubbleLayout from "../components/BubbleLayout.js";
 
-export default function SummaryPage() {
+export default function MessagePage() {
   const navigate = useNavigate();
 
-  const goToReListen = () => {
-    navigate("/relisten");
+  const handleClick = () => {
+    navigate("/listen");
   };
 
-  const goToResult = () => {
-    navigate("/result");
+  const goToPhone = () => {
+    navigate("/phone");
+  };
+
+  const goToSuccess = () => {
+    navigate("/success");
   };
   return (
-    <PlusLayout
-      des="말씀하신 내용이 맞으신가요?"
-      content={`요약 내용 뭐라무라루마ㅜㄹ아ㅜㄹ아ㅜㄹ눌우ㅐ`}
-      image="src/assets/img3.png"
+    <BubbleLayout
+      //onClick={handleClick}
+      title="문자안내"
+      image="src/assets/img2.png"
+      topImage="src/assets/top.png"
+      content={`민원처리 내용을\n문자로\n받아보시겠어요?`}
     >
-      {/* 이 부분은 추후 삭제 예정 */}
       <div
         style={{
           display: "flex",
@@ -28,7 +34,7 @@ export default function SummaryPage() {
         }}
       >
         <button
-          onClick={goToReListen}
+          onClick={goToPhone}
           style={{
             padding: "20px 40px",
             fontSize: "32px",
@@ -38,11 +44,11 @@ export default function SummaryPage() {
             cursor: "pointer",
           }}
         >
-          재질문
+          네
         </button>
 
         <button
-          onClick={goToResult}
+          onClick={goToSuccess}
           style={{
             padding: "20px 40px",
             fontSize: "32px",
@@ -52,9 +58,9 @@ export default function SummaryPage() {
             cursor: "pointer",
           }}
         >
-          결과확인
+          아니오
         </button>
       </div>
-    </PlusLayout>
+    </BubbleLayout>
   );
 }

@@ -4,6 +4,7 @@ interface PlusLayoutProps {
   content: string;
   des: string;
   children?: ReactNode;
+  image?: string;
 }
 
 /* 바깥 전체 Wrapper */
@@ -14,7 +15,7 @@ const wrapperStyle: CSSProperties = {
   display: "flex",
   justifyContent: "center",
   alignItems: "center",
-  background: "#FBDA05",
+  backgroundColor: "rgba(142, 209, 71, 0.77)",
   overflow: "hidden",
 };
 
@@ -22,9 +23,9 @@ const whiteCardStyle: CSSProperties = {
   position: "absolute",
   top: "0",
   width: "100vw",
-  height: "650px",
+  height: "630px",
   background: "#FFFFFF",
-  borderRadius: "0px 0px 150px 150px",
+  borderRadius: "0px 0px 100px 100px",
   display: "flex",
   justifyContent: "center",
   alignItems: "center",
@@ -44,14 +45,20 @@ const contentStyle: CSSProperties = {
 
 const desStyle: CSSProperties = {
   position: "absolute",
-  right: 0,
-  padding: "0 20px",
+  marginLeft: "350px",
+  marginTop: "50px",
   textAlign: "center",
   fontFamily: "KoddiUD OnGothic",
   fontWeight: 600,
-  fontSize: "40px",
+  fontSize: "50px",
   color: "#000000",
-  top: "650px",
+  top: "635px",
+};
+
+const imageStyle: CSSProperties = {
+  position: "absolute",
+  bottom: "0",
+  left: "20px",
 };
 
 const bottomAreaStyle: CSSProperties = {
@@ -62,21 +69,37 @@ const bottomAreaStyle: CSSProperties = {
   justifyContent: "flex-start",
   alignItems: "center",
   paddingTop: "40px",
+  whiteSpace: "pre-line",
 };
+const childrenWrapperStyle: CSSProperties = {
+  position: "absolute",
+  top: "55%", // 화면 세로 기준 위치 (원하면 조절 가능)
+  left: "50%",
+  transform: "translate(-50%, -50%)", // 가운데 정렬
+  width: "100%",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+};
+function renderMultiline(content: string) {
+  return content.split("\n").map((line, idx) => <div key={idx}>{line}</div>);
+}
 
 export default function PlusLayout({
   content,
   des,
   children,
+  image,
 }: PlusLayoutProps) {
   return (
     <div style={wrapperStyle}>
       <div style={whiteCardStyle}>
-        <div style={contentStyle}> {content}</div>
+        {content && <div style={contentStyle}>{renderMultiline(content)}</div>}{" "}
       </div>
+      <div style={childrenWrapperStyle}>{children}</div>
       <div style={bottomAreaStyle}>
-        {children} {/* 병아리 이미지를 아래에 둘 수 있음 */}
         <div style={desStyle}>{des}</div>
+        {image && <img src={image} alt="img decoration" style={imageStyle} />}
       </div>
     </div>
   );

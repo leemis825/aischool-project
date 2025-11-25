@@ -2,7 +2,7 @@ import { useNavigate } from "react-router-dom";
 import Layout from "../components/Layout.js";
 import { useEffect, useRef, useState } from "react";
 
-export default function ListeningPage() {
+export default function ReListeningPage() {
   const navigate = useNavigate();
 
   const [isRecording, setIsRecording] = useState(false);
@@ -191,7 +191,7 @@ export default function ListeningPage() {
 
     const { width, height } = canvas;
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = "#4E9948";
+    ctx.fillStyle = "#FFF5C4";
     ctx.fillRect(0, 0, width, height);
   };
 
@@ -296,8 +296,8 @@ export default function ListeningPage() {
   return (
     <Layout
       title="민원접수"
-      content="민원을 듣고 있어요"
-      topImage="src/assets/top2.png"
+      content="말씀해주세요"
+      topImage="src/assets/dog2.png"
       onClick={handleClick}
     >
       <div
