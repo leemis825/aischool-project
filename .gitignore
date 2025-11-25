@@ -11,6 +11,8 @@ keys/
 *.key
 *.pem
 *.json
+*.secret
+*.pub
 
 # Audio uploads
 uploads/
