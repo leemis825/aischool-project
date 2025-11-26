@@ -9,14 +9,14 @@ export default function ComplaintPage() {
   return (
     <Layout
       onClick={handleClick}
-      title="민원확인"
+      title="민원접수"
       content={`화면을 누르고
         민원을 말씀해주세요`}
-      headerImage="src/assets/duck1.png"
+      topImage="src/assets/top2.png"
     >
       <div
         style={{
-          background: "#FFF5C4",
+          background: "#CBF3C7",
           padding: "24px 32px",
           borderRadius: "24px",
           fontSize: "40px",

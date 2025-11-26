@@ -12,6 +12,10 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  margin: 0;
+  padding: 0;
+  height: 100%;
 }
 
 a {
@@ -27,9 +31,8 @@ body {
   margin: 0;
   display: flex;
   place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
   font-family: "KoddiUD OnGothic";
+  overflow: hidden;
 }
 
 h1 {
