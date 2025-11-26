@@ -1,15 +1,15 @@
-name: Deploy Backend to NCP Server (staging)
+name: Deploy Backend to NCP Staging
 
 on:
   push:
-    branches: ["staging"]   # staging 브랜치에 push 될 때만 실행
+    branches: ["dev"]
 
 jobs:
-  deploy-staging:
+  deploy-backend-stg:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) 코드 가져오기
+      # 1) 코드 체크아웃
       - name: Checkout
         uses: actions/checkout@v3
 
@@ -21,72 +21,90 @@ jobs:
             -u "${{ secrets.NCP_ACCESS_KEY }}" \
             --password-stdin
 
-      # 3) 백엔드 Docker 이미지 빌드 (prod와 같은 이미지 사용)
-      - name: Build Backend Docker image (staging)
+      # 3) 백엔드 이미지 빌드 (운영과 동일 이미지를 사용)
+      - name: Build backend Docker image
         run: |
           docker build \
             -f Dockerfile.backend \
             -t ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_BACKEND }}:latest .
 
-      # 4) Registry로 Push
-      - name: Push Backend Docker image (staging)
+      # 4) Registry로 푸시
+      - name: Push backend Docker image
         run: |
           docker push ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_BACKEND }}:latest
 
-      # 5) SSH 키 설정
+      # 5) GitHub Runner → NCP 서버로 SSH 키 설정
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/minwon.pem
           chmod 600 ~/.ssh/minwon.pem
 
-      # 6) 서버 접속해서 스테이징 컨테이너 교체 + 헬스체크
-      - name: Deploy to NCP Server (staging)
+      # 6) 스테이징 컨테이너 교체 + 헬스체크 + 실패 시 스테이징 롤백
+      - name: Deploy backend to NCP staging
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << 'EOF'
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << EOF
             set -e
 
             REGISTRY_URL="${REGISTRY_URL}"
             IMAGE_NAME_BACKEND="${IMAGE_NAME_BACKEND}"
 
-            echo "==> 스테이징용 컨테이너 mk-stg 교체 시작"
+            echo "[STG] 현재 mk-stg 컨테이너 이미지 백업"
+            OLD_IMAGE_ID=\$(docker inspect --format='{{.Image}}' mk-stg 2>/dev/null || true)
 
-            echo "==> 최신 백엔드 이미지 pull"
-            docker pull ${REGISTRY_URL}/${IMAGE_NAME_BACKEND}:latest
+            echo "[STG] 최신 백엔드 이미지 pull"
+            docker pull \${REGISTRY_URL}/\${IMAGE_NAME_BACKEND}:latest
 
-            echo "==> 기존 mk-stg 중지/삭제 (있으면)"
+            echo "[STG] 기존 mk-stg 컨테이너 중지/삭제"
             docker stop mk-stg 2>/dev/null || true
             docker rm mk-stg 2>/dev/null || true
 
-            echo "==> 새 mk-stg 컨테이너 실행 (포트 8001, .env.stg 사용)"
+            echo "[STG] 새 mk-stg 컨테이너 실행 (.env.stg 사용, 포트 8001:8000)"
             docker run -d \
               --name mk-stg \
               -p 8001:8000 \
               --restart unless-stopped \
               --env-file /home/ubuntu/minwon-kiosk/.env.stg \
-              ${REGISTRY_URL}/${IMAGE_NAME_BACKEND}:latest
+              \${REGISTRY_URL}/\${IMAGE_NAME_BACKEND}:latest
 
-            echo "==> 스테이징 헬스체크 (8001 포트, 최대 10번)"
+            echo "[STG] 헬스체크 시작 (최대 10회, 5초 간격)"
             success=false
-            for i in $(seq 1 10); do
+            for i in \$(seq 1 10); do
               sleep 5
               if curl -fs http://127.0.0.1:8001/ >/dev/null 2>&1; then
-                echo "헬스체크 통과 (시도 ${i}회차)"
+                echo "[STG] 헬스체크 통과 (시도 \$i 회차)"
                 success=true
                 break
               fi
-              echo "헬스체크 재시도... (${i}/10)"
+              echo "[STG] 헬스체크 재시도 (\$i/10)"
             done
 
-            if [ "$success" = false ]; then
-              echo "헬스체크 실패, mk-stg 컨테이너 로그 출력 후 삭제"
+            if [ "\$success" = false ]; then
+              echo "[STG] 헬스체크 실패, 스테이징 롤백 진행"
+
+              echo "[STG] 실패한 mk-stg 컨테이너 로그 (최근 50줄)"
               docker logs mk-stg --tail=50 || true
+
+              echo "[STG] 실패한 mk-stg 컨테이너 종료 및 삭제"
               docker stop mk-stg 2>/dev/null || true
               docker rm mk-stg 2>/dev/null || true
+
+              if [ -n "\$OLD_IMAGE_ID" ]; then
+                echo "[STG] 이전 이미지로 mk-stg 복구"
+                docker run -d \
+                  --name mk-stg \
+                  -p 8001:8000 \
+                  --restart unless-stopped \
+                  --env-file /home/ubuntu/minwon-kiosk/.env.stg \
+                  \$OLD_IMAGE_ID
+              else
+                echo "[STG] 이전 이미지 정보가 없어 mk-stg 롤백 불가"
+              fi
+
               exit 1
             fi
 
-            echo "스테이징 배포 완료"
+            echo "[STG] 배포 및 헬스체크 완료"
           EOF
         env:
           REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
