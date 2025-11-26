@@ -9,11 +9,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) 코드 가져오기
       - name: Checkout
         uses: actions/checkout@v3
 
-      # 2) Naver Cloud Registry 로그인
       - name: Login to Naver Cloud Registry
         run: |
           echo "${{ secrets.NCP_SECRET_KEY }}" | docker login \
@@ -21,93 +19,88 @@ jobs:
             -u "${{ secrets.NCP_ACCESS_KEY }}" \
             --password-stdin
 
-      # 3) 백엔드 Docker 이미지 빌드
-      #    - Dockerfile.backend 가 리포지토리 루트에 있다고 가정
       - name: Build Backend Docker image
         run: |
           docker build \
             -f Dockerfile.backend \
             -t ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_BACKEND }}:latest .
 
-      # 4) Registry로 Push
       - name: Push Backend Docker image
         run: |
           docker push ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_BACKEND }}:latest
 
-      # 5) SSH 키 설정 (GitHub Runner → NCP 서버)
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/minwon.pem
           chmod 600 ~/.ssh/minwon.pem
 
-      # 6) 서버 접속해서 컨테이너 교체 + 헬스체크 + 실패 시 롤백
       - name: Deploy to NCP Server
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << 'EOF'
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << EOF
             set -e
 
             REGISTRY_URL="${REGISTRY_URL}"
             IMAGE_NAME_BACKEND="${IMAGE_NAME_BACKEND}"
 
-            echo "==> 현재 컨테이너 이미지 백업"
-            OLD_IMAGE_ID=$(docker inspect --format='{{.Image}}' mk 2>/dev/null || true)
+            echo "Backing up old container image"
+            OLD_IMAGE_ID=\$(docker inspect --format='{{.Image}}' mk 2>/dev/null || true)
 
-            echo "==> 최신 백엔드 이미지 pull"
-            docker pull ${REGISTRY_URL}/${IMAGE_NAME_BACKEND}:latest
+            echo "Pulling latest backend image"
+            docker pull \${REGISTRY_URL}/\${IMAGE_NAME_BACKEND}:latest
 
-            echo "==> 기존 컨테이너 mk 중지/삭제"
+            echo "Stopping/removing old container"
             docker stop mk 2>/dev/null || true
             docker rm mk 2>/dev/null || true
 
-            echo "==> 새 컨테이너 mk 실행"
+            echo "Starting new container"
             docker run -d \
               --name mk \
               -p 8000:8000 \
               --restart unless-stopped \
               --env-file /home/ubuntu/minwon-kiosk/.env \
-              ${REGISTRY_URL}/${IMAGE_NAME_BACKEND}:latest
+              \${REGISTRY_URL}/\${IMAGE_NAME_BACKEND}:latest
 
-            echo "==> 헬스체크 시작 (최대 10번, 5초 간격)"
+            echo "Health check start"
             success=false
-            for i in $(seq 1 10); do
+
+            for i in \$(seq 1 10); do
               sleep 5
               if curl -fs http://127.0.0.1:8000/ >/dev/null 2>&1; then
-                echo "헬스체크 통과 ✅ (시도 $i 회차)"
+                echo "Health check passed"
                 success=true
                 break
               fi
-              echo "헬스체크 재시도... ($i/10)"
+              echo "Retry health check (\$i/10)"
             done
 
-            if [ "$success" = false ]; then
-              echo "헬스체크 실패 ❌, 롤백 진행"
+            if [ "\$success" = false ]; then
+              echo "Health check failed. Rolling back."
 
-              echo "==> 새 컨테이너 로그 (최근 50줄)"
+              echo "Container logs:"
               docker logs mk --tail=50 || true
 
-              echo "==> 새 컨테이너 종료 및 삭제"
+              echo "Removing failed container"
               docker stop mk 2>/dev/null || true
               docker rm mk 2>/dev/null || true
 
-              if [ -n "$OLD_IMAGE_ID" ]; then
-                echo "==> 이전 이미지로 컨테이너 복구"
+              if [ -n "\$OLD_IMAGE_ID" ]; then
+                echo "Restoring old container"
                 docker run -d \
                   --name mk \
                   -p 8000:8000 \
                   --restart unless-stopped \
                   --env-file /home/ubuntu/minwon-kiosk/.env \
-                  $OLD_IMAGE_ID
+                  \$OLD_IMAGE_ID
               else
-                echo "이전 이미지 정보가 없어 롤백할 수 없습니다."
+                echo "No previous image available to roll back"
               fi
 
-              # GitHub Actions 에 실패 표시
               exit 1
             fi
 
-            echo "배포 & 헬스체크 완료 🎉"
+            echo "Deployment completed"
           EOF
-      env:
-        REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
-        IMAGE_NAME_BACKEND: ${{ secrets.IMAGE_NAME_BACKEND }}
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+          IMAGE_NAME_BACKEND: ${{ secrets.IMAGE_NAME_BACKEND }}
