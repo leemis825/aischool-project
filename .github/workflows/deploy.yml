@@ -1,4 +1,4 @@
-name: Deploy Backend to NCP Server
+name: Deploy Backend & Frontend to NCP Server
 
 on:
   push:
@@ -9,50 +9,93 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1) GitHub에서 코드 가져오기
-    - name: Checkout
-      uses: actions/checkout@v3
+      # 1) 코드 체크아웃
+      - name: Checkout
+        uses: actions/checkout@v3
 
-    # 2) NCR 로그인
-    - name: Login to Naver Cloud Registry
-      run: |
-        echo "${{ secrets.NCP_SECRET_KEY }}" | docker login \
-          ${{ secrets.REGISTRY_URL }} \
-          -u "${{ secrets.NCP_ACCESS_KEY }}" \
-          --password-stdin
+      # 2) Naver Cloud Registry 로그인
+      - name: Login to Naver Cloud Registry
+        run: |
+          echo "${{ secrets.NCP_SECRET_KEY }}" | docker login \
+            ${{ secrets.REGISTRY_URL }} \
+            -u "${{ secrets.NCP_ACCESS_KEY }}" \
+            --password-stdin
 
-    # 3) Docker 이미지 빌드
-    - name: Build Docker image
-      run: |
-        docker build -t ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME }}:latest .
+      # 3) 백엔드 Docker 이미지 빌드
+      #    - Dockerfile.backend 는 repo 루트에 있고
+      #      빌드 컨텍스트도 루트(.) 기준이라고 가정
+      - name: Build backend image
+        run: |
+          docker build \
+            -f Dockerfile.backend \
+            -t ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_BACKEND }}:latest \
+            .
 
-    # 4) NCR로 이미지 push
-    - name: Push Docker image
-      run: |
-        docker push ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME }}:latest
+      # 4) 프론트엔드 Docker 이미지 빌드
+      #    - frontend/Dockerfile.frontend 사용
+      #    - 빌드 컨텍스트는 ./frontend
+      - name: Build frontend image
+        run: |
+          docker build \
+            -f frontend/Dockerfile.frontend \
+            -t ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_FRONTEND }}:latest \
+            ./frontend
 
-    # 5) SSH 키 설정
-    - name: Setup SSH key
-      run: |
-        mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/minwon.pem
-        chmod 600 ~/.ssh/minwon.pem
+      # 5) 레지스트리에 이미지 push
+      - name: Push backend image
+        run: |
+          docker push ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_BACKEND }}:latest
 
-    # 6) 서버에 접속해서 pull + 컨테이너 재시작
-    - name: Deploy to NCP Server
-      run: |
-        ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << 'EOF'
-          docker pull ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME }}:latest
-          
-          docker stop minwon || true
-          docker rm minwon || true
-          
-          docker run -d \
-            --name minwon \
-            -p 8000:8000 \
-            --restart unless-stopped \
-            --env-file /home/ubuntu/minwon-kiosk/.env \
-            ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME }}:latest
-          docker logs minwon --tail=10
-        EOF
+      - name: Push frontend image
+        run: |
+          docker push ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_FRONTEND }}:latest
 
+      # 6) SSH 키 설정 (GitHub Runner -> NCP 서버)
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/minwon.pem
+          chmod 600 ~/.ssh/minwon.pem
+
+      # 7) NCP 서버에 접속해서 컨테이너 교체
+      - name: Deploy to NCP Server
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+          BACKEND_IMAGE: ${{ secrets.IMAGE_NAME_BACKEND }}
+          FRONTEND_IMAGE: ${{ secrets.IMAGE_NAME_FRONTEND }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << EOF
+            set -e
+
+            REGISTRY_URL="${REGISTRY_URL}"
+            BACKEND_IMAGE="${BACKEND_IMAGE}"
+            FRONTEND_IMAGE="${FRONTEND_IMAGE}"
+
+            echo "[1] 최신 이미지 pull"
+            docker pull \$REGISTRY_URL/\$BACKEND_IMAGE:latest
+            docker pull \$REGISTRY_URL/\$FRONTEND_IMAGE:latest
+
+            echo "[2] 기존 컨테이너 중지/삭제"
+            docker stop mk || true
+            docker rm mk || true
+            docker stop mk-frontend || true
+            docker rm mk-frontend || true
+
+            echo "[3] 백엔드 컨테이너 재실행"
+            docker run -d \
+              --name mk \
+              -p 8000:8000 \
+              --restart unless-stopped \
+              --env-file /home/ubuntu/minwon-kiosk/.env \
+              \$REGISTRY_URL/\$BACKEND_IMAGE:latest
+
+            echo "[4] 프론트엔드 컨테이너 재실행 (Nginx, 80포트)"
+            docker run -d \
+              --name mk-frontend \
+              -p 80:80 \
+              --restart unless-stopped \
+              \$REGISTRY_URL/\$FRONTEND_IMAGE:latest
+
+            echo "[5] 현재 컨테이너 상태 확인"
+            docker ps
+          EOF
