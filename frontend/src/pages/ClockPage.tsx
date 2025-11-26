@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
-
-// 음력, 절기 api 연결 필요, 현재는 더미 데이터 사용
+import {
+  getHeaderStatus,
+  type HeaderStatus,
+} from "../services/gwangjuStateService";
 
 const wrapperStyle: CSSProperties = {
   width: "100vw",
@@ -78,27 +80,74 @@ function formatTime(date: Date) {
   const mm = String(date.getMinutes()).padStart(2, "0");
   return `${hh} : ${mm}`;
 }
-
 export default function ClockPage() {
   const [now, setNow] = useState(new Date());
+  const [headerStatus, setHeaderStatus] = useState<HeaderStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
   const navigate = useNavigate();
 
-  // 🔥 1초마다 시간 업데이트
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // 더미 데이터
-  const solarTerm = "소설(小雪)";
-  const maxTemp = 18;
-  const minTemp = 5;
-  const weatherIcon = "☀";
-  const lunarText = "음력 10월 12일";
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        setError(null);
+        const data = await getHeaderStatus("Gwangju");
+        setHeaderStatus(data);
+
+        if (data.now_iso) {
+          setNow(new Date(data.now_iso));
+        }
+      } catch (e) {
+        console.error(e);
+        setError("상태 정보를 불러오는 중 오류가 발생했습니다.");
+      }
+    };
+
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 60_000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleClick = () => {
     navigate("/complaint");
   };
+
+  // ✅ 응답 도착 여부
+  const isLoaded = !!headerStatus;
+
+  // ✅ 날짜
+  const dateDisplay = formatDate(now);
+
+  // ✅ 절기 / 음력 (빈 문자열이면 '정보 없음'으로)
+  const solarTerm =
+    headerStatus && headerStatus.lunar.seasonal_term
+      ? headerStatus.lunar.seasonal_term
+      : isLoaded
+      ? "절기 정보 없음"
+      : "절기 정보를 불러오는 중...";
+
+  const lunarText =
+    headerStatus && headerStatus.lunar.lunar_date
+      ? headerStatus.lunar.lunar_date
+      : isLoaded
+      ? "음력 정보 없음"
+      : "음력 정보를 불러오는 중...";
+
+  // ✅ 날씨 텍스트
+  let weatherText: string;
+  if (!isLoaded) {
+    weatherText = "날씨 정보를 불러오는 중...";
+  } else if (!headerStatus?.weather) {
+    weatherText = "날씨 정보 없음";
+  } else {
+    const { temp, feels_like, condition } = headerStatus.weather;
+    weatherText = `${condition} ${temp}℃ / ${feels_like}℃`;
+  }
 
   return (
     <div style={wrapperStyle} onClick={handleClick}>
@@ -106,13 +155,26 @@ export default function ClockPage() {
         {/* 절기 + 날씨 */}
         <div style={topRowStyle}>
           <span>
-            {solarTerm} · {weatherIcon} {maxTemp}℃ / {minTemp}℃
+            {solarTerm} · {weatherText}
           </span>
         </div>
 
+        {error && (
+          <div
+            style={{
+              color: "red",
+              fontSize: "20px",
+              marginTop: "16px",
+              textAlign: "center",
+            }}
+          >
+            {error}
+          </div>
+        )}
+
         {/* 날짜 + 음력 */}
         <div style={dateBlockStyle}>
-          <div style={dateStyle}>{formatDate(now)}</div>
+          <div style={dateStyle}>{dateDisplay}</div>
           <div style={lunarStyle}>{lunarText}</div>
         </div>
 
