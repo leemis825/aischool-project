@@ -3,10 +3,8 @@ name: Deploy Frontend to NCP Staging
 on:
   push:
     branches: ["dev"]
-    # 프론트 관련 변경이 있을 때만 돌게 하고 싶으면 아래 paths 유지
-    paths:
-      - "frontend/**"
-      - ".github/workflows/deploy-frontend-stg.yml"
+  # Actions 탭에서 수동 실행도 가능하게
+  workflow_dispatch:
 
 jobs:
   deploy-frontend-stg:
@@ -26,7 +24,6 @@ jobs:
             --password-stdin
 
       # 3) 프론트엔드 Docker 이미지 빌드
-      #    - frontend/Dockerfile.frontend 사용 (이미 로컬에서 테스트했던 그 파일)
       - name: Build frontend Docker image
         run: |
           docker build \
@@ -48,17 +45,17 @@ jobs:
       # 6) 스테이징 프론트 컨테이너 교체 + 헬스체크 + 롤백
       - name: Deploy frontend to NCP staging
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << EOF
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << 'EOF'
             set -e
 
             REGISTRY_URL="${REGISTRY_URL}"
             IMAGE_NAME_FRONTEND="${IMAGE_NAME_FRONTEND}"
 
             echo "[STG-FE] 현재 mk-front-stg 컨테이너 이미지 백업"
-            OLD_IMAGE_ID=\$(docker inspect --format='{{.Image}}' mk-front-stg 2>/dev/null || true)
+            OLD_IMAGE_ID=$(docker inspect --format='{{.Image}}' mk-front-stg 2>/dev/null || true)
 
             echo "[STG-FE] 최신 프론트엔드 이미지 pull"
-            docker pull \${REGISTRY_URL}/\${IMAGE_NAME_FRONTEND}:latest
+            docker pull ${REGISTRY_URL}/${IMAGE_NAME_FRONTEND}:latest
 
             echo "[STG-FE] 기존 mk-front-stg 컨테이너 중지/삭제"
             docker stop mk-front-stg 2>/dev/null || true
@@ -69,21 +66,21 @@ jobs:
               --name mk-front-stg \
               -p 8081:80 \
               --restart unless-stopped \
-              \${REGISTRY_URL}/\${IMAGE_NAME_FRONTEND}:latest
+              ${REGISTRY_URL}/${IMAGE_NAME_FRONTEND}:latest
 
             echo "[STG-FE] 헬스체크 시작 (최대 10회, 5초 간격)"
             success=false
-            for i in \$(seq 1 10); do
+            for i in $(seq 1 10); do
               sleep 5
               if curl -fs http://127.0.0.1:8081/ >/dev/null 2>&1; then
-                echo "[STG-FE] 헬스체크 통과 (시도 \$i 회차)"
+                echo "[STG-FE] 헬스체크 통과 (시도 $i 회차)"
                 success=true
                 break
               fi
-              echo "[STG-FE] 헬스체크 재시도 (\$i/10)"
+              echo "[STG-FE] 헬스체크 재시도 ($i/10)"
             done
 
-            if [ "\$success" = false ]; then
+            if [ "$success" = false ]; then
               echo "[STG-FE] 헬스체크 실패, 스테이징 프론트 롤백 진행"
 
               echo "[STG-FE] 실패한 mk-front-stg 컨테이너 로그 (최근 50줄)"
@@ -93,13 +90,13 @@ jobs:
               docker stop mk-front-stg 2>/dev/null || true
               docker rm mk-front-stg 2>/dev/null || true
 
-              if [ -n "\$OLD_IMAGE_ID" ]; then
+              if [ -n "$OLD_IMAGE_ID" ]; then
                 echo "[STG-FE] 이전 이미지로 mk-front-stg 복구"
                 docker run -d \
                   --name mk-front-stg \
                   -p 8081:80 \
                   --restart unless-stopped \
-                  \$OLD_IMAGE_ID
+                  $OLD_IMAGE_ID
               else
                 echo "[STG-FE] 이전 이미지 정보가 없어 mk-front-stg 롤백 불가"
               fi
