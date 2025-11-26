@@ -1,4 +1,4 @@
-name: Deploy Backend & Frontend to NCP Server
+name: Deploy Backend to NCP Server
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) 코드 체크아웃
+      # 1) 코드 가져오기
       - name: Checkout
         uses: actions/checkout@v3
 
@@ -22,80 +22,92 @@ jobs:
             --password-stdin
 
       # 3) 백엔드 Docker 이미지 빌드
-      #    - Dockerfile.backend 는 repo 루트에 있고
-      #      빌드 컨텍스트도 루트(.) 기준이라고 가정
-      - name: Build backend image
+      #    - Dockerfile.backend 가 리포지토리 루트에 있다고 가정
+      - name: Build Backend Docker image
         run: |
           docker build \
             -f Dockerfile.backend \
-            -t ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_BACKEND }}:latest \
-            .
+            -t ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_BACKEND }}:latest .
 
-      # 4) 프론트엔드 Docker 이미지 빌드
-      #    - frontend/Dockerfile.frontend 사용
-      #    - 빌드 컨텍스트는 ./frontend
-      - name: Build frontend image
-        run: |
-          docker build \
-            -f frontend/Dockerfile.frontend \
-            -t ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_FRONTEND }}:latest \
-            ./frontend
-
-      # 5) 레지스트리에 이미지 push
-      - name: Push backend image
+      # 4) Registry로 Push
+      - name: Push Backend Docker image
         run: |
           docker push ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_BACKEND }}:latest
 
-      - name: Push frontend image
-        run: |
-          docker push ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_FRONTEND }}:latest
-
-      # 6) SSH 키 설정 (GitHub Runner -> NCP 서버)
+      # 5) SSH 키 설정 (GitHub Runner → NCP 서버)
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/minwon.pem
           chmod 600 ~/.ssh/minwon.pem
 
-      # 7) NCP 서버에 접속해서 컨테이너 교체
+      # 6) 서버 접속해서 컨테이너 교체 + 헬스체크 + 실패 시 롤백
       - name: Deploy to NCP Server
-        env:
-          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
-          BACKEND_IMAGE: ${{ secrets.IMAGE_NAME_BACKEND }}
-          FRONTEND_IMAGE: ${{ secrets.IMAGE_NAME_FRONTEND }}
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << EOF
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << 'EOF'
             set -e
 
             REGISTRY_URL="${REGISTRY_URL}"
-            BACKEND_IMAGE="${BACKEND_IMAGE}"
-            FRONTEND_IMAGE="${FRONTEND_IMAGE}"
+            IMAGE_NAME_BACKEND="${IMAGE_NAME_BACKEND}"
 
-            echo "[1] 최신 이미지 pull"
-            docker pull \$REGISTRY_URL/\$BACKEND_IMAGE:latest
-            docker pull \$REGISTRY_URL/\$FRONTEND_IMAGE:latest
+            echo "==> 현재 컨테이너 이미지 백업"
+            OLD_IMAGE_ID=$(docker inspect --format='{{.Image}}' mk 2>/dev/null || true)
 
-            echo "[2] 기존 컨테이너 중지/삭제"
-            docker stop mk || true
-            docker rm mk || true
-            docker stop mk-frontend || true
-            docker rm mk-frontend || true
+            echo "==> 최신 백엔드 이미지 pull"
+            docker pull ${REGISTRY_URL}/${IMAGE_NAME_BACKEND}:latest
 
-            echo "[3] 백엔드 컨테이너 재실행"
+            echo "==> 기존 컨테이너 mk 중지/삭제"
+            docker stop mk 2>/dev/null || true
+            docker rm mk 2>/dev/null || true
+
+            echo "==> 새 컨테이너 mk 실행"
             docker run -d \
               --name mk \
               -p 8000:8000 \
               --restart unless-stopped \
               --env-file /home/ubuntu/minwon-kiosk/.env \
-              \$REGISTRY_URL/\$BACKEND_IMAGE:latest
+              ${REGISTRY_URL}/${IMAGE_NAME_BACKEND}:latest
 
-            echo "[4] 프론트엔드 컨테이너 재실행 (Nginx, 80포트)"
-            docker run -d \
-              --name mk-frontend \
-              -p 80:80 \
-              --restart unless-stopped \
-              \$REGISTRY_URL/\$FRONTEND_IMAGE:latest
+            echo "==> 헬스체크 시작 (최대 10번, 5초 간격)"
+            success=false
+            for i in $(seq 1 10); do
+              sleep 5
+              if curl -fs http://127.0.0.1:8000/ >/dev/null 2>&1; then
+                echo "헬스체크 통과 ✅ (시도 $i 회차)"
+                success=true
+                break
+              fi
+              echo "헬스체크 재시도... ($i/10)"
+            done
 
-            echo "[5] 현재 컨테이너 상태 확인"
-            docker ps
+            if [ "$success" = false ]; then
+              echo "헬스체크 실패 ❌, 롤백 진행"
+
+              echo "==> 새 컨테이너 로그 (최근 50줄)"
+              docker logs mk --tail=50 || true
+
+              echo "==> 새 컨테이너 종료 및 삭제"
+              docker stop mk 2>/dev/null || true
+              docker rm mk 2>/dev/null || true
+
+              if [ -n "$OLD_IMAGE_ID" ]; then
+                echo "==> 이전 이미지로 컨테이너 복구"
+                docker run -d \
+                  --name mk \
+                  -p 8000:8000 \
+                  --restart unless-stopped \
+                  --env-file /home/ubuntu/minwon-kiosk/.env \
+                  $OLD_IMAGE_ID
+              else
+                echo "이전 이미지 정보가 없어 롤백할 수 없습니다."
+              fi
+
+              # GitHub Actions 에 실패 표시
+              exit 1
+            fi
+
+            echo "배포 & 헬스체크 완료 🎉"
           EOF
+      env:
+        REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+        IMAGE_NAME_BACKEND: ${{ secrets.IMAGE_NAME_BACKEND }}
