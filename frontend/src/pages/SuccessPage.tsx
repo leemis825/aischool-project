@@ -9,7 +9,7 @@ export default function SuccessPage() {
   useEffect(() => {
     const timer = setTimeout(() => {
       navigate("/finish"); //
-    }, 10000); // 10초
+    }, 5000); // 10초
 
     return () => clearTimeout(timer); // cleanup
   }, [navigate]);

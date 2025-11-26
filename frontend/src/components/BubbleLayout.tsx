@@ -104,14 +104,6 @@ const bubbleTextStyle: CSSProperties = {
   color: "#000000",
 };
 
-/** children wrapper */
-const childrenWrapperStyle: CSSProperties = {
-  width: "100%",
-  height: "100%",
-  display: "flex",
-  justifyContent: "center", // 가로 중앙
-  alignItems: "center", // 세로 중앙
-};
 
 const imageStyle: CSSProperties = {
   position: "absolute",
