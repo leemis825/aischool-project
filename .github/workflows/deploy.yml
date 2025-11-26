@@ -9,50 +9,98 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1) GitHub에서 코드 가져오기
-    - name: Checkout
-      uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v3
 
-    # 2) NCR 로그인
-    - name: Login to Naver Cloud Registry
-      run: |
-        echo "${{ secrets.NCP_SECRET_KEY }}" | docker login \
-          ${{ secrets.REGISTRY_URL }} \
-          -u "${{ secrets.NCP_ACCESS_KEY }}" \
-          --password-stdin
+      - name: Login to Naver Cloud Registry
+        run: |
+          echo "${{ secrets.NCP_SECRET_KEY }}" | docker login \
+            ${{ secrets.REGISTRY_URL }} \
+            -u "${{ secrets.NCP_ACCESS_KEY }}" \
+            --password-stdin
 
-    # 3) Docker 이미지 빌드
-    - name: Build Docker image
-      run: |
-        docker build -t ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME }}:latest .
+      - name: Build Backend Docker image
+        run: |
+          docker build \
+            -f Dockerfile.backend \
+            -t ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_BACKEND }}:latest .
 
-    # 4) NCR로 이미지 push
-    - name: Push Docker image
-      run: |
-        docker push ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME }}:latest
+      - name: Push Backend Docker image
+        run: |
+          docker push ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME_BACKEND }}:latest
 
-    # 5) SSH 키 설정
-    - name: Setup SSH key
-      run: |
-        mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/minwon.pem
-        chmod 600 ~/.ssh/minwon.pem
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/minwon.pem
+          chmod 600 ~/.ssh/minwon.pem
 
-    # 6) 서버에 접속해서 pull + 컨테이너 재시작
-    - name: Deploy to NCP Server
-      run: |
-        ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << 'EOF'
-          docker pull ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME }}:latest
-          
-          docker stop minwon || true
-          docker rm minwon || true
-          
-          docker run -d \
-            --name minwon \
-            -p 8000:8000 \
-            --restart unless-stopped \
-            --env-file /home/ubuntu/minwon-kiosk/.env \
-            ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME }}:latest
-          docker logs minwon --tail=10
-        EOF
+      - name: Deploy to NCP Server
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << EOF
+            set -e
 
+            REGISTRY_URL="${REGISTRY_URL}"
+            IMAGE_NAME_BACKEND="${IMAGE_NAME_BACKEND}"
+
+            echo "Backing up old container image"
+            OLD_IMAGE_ID=\$(docker inspect --format='{{.Image}}' mk 2>/dev/null || true)
+
+            echo "Pulling latest backend image"
+            docker pull \${REGISTRY_URL}/\${IMAGE_NAME_BACKEND}:latest
+
+            echo "Stopping/removing old container"
+            docker stop mk 2>/dev/null || true
+            docker rm mk 2>/dev/null || true
+
+            echo "Starting new container"
+            docker run -d \
+              --name mk \
+              -p 8000:8000 \
+              --restart unless-stopped \
+              --env-file /home/ubuntu/minwon-kiosk/.env \
+              \${REGISTRY_URL}/\${IMAGE_NAME_BACKEND}:latest
+
+            echo "Health check start"
+            success=false
+
+            for i in \$(seq 1 10); do
+              sleep 5
+              if curl -fs http://127.0.0.1:8000/ >/dev/null 2>&1; then
+                echo "Health check passed"
+                success=true
+                break
+              fi
+              echo "Retry health check (\$i/10)"
+            done
+
+            if [ "\$success" = false ]; then
+              echo "Health check failed. Rolling back."
+
+              echo "Container logs:"
+              docker logs mk --tail=50 || true
+
+              echo "Removing failed container"
+              docker stop mk 2>/dev/null || true
+              docker rm mk 2>/dev/null || true
+
+              if [ -n "\$OLD_IMAGE_ID" ]; then
+                echo "Restoring old container"
+                docker run -d \
+                  --name mk \
+                  -p 8000:8000 \
+                  --restart unless-stopped \
+                  --env-file /home/ubuntu/minwon-kiosk/.env \
+                  \$OLD_IMAGE_ID
+              else
+                echo "No previous image available to roll back"
+              fi
+
+              exit 1
+            fi
+
+            echo "Deployment completed"
+          EOF
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+          IMAGE_NAME_BACKEND: ${{ secrets.IMAGE_NAME_BACKEND }}
