@@ -85,6 +85,7 @@ const bubbleBodyStyle: CSSProperties = {
   alignItems: "center",
   boxSizing: "border-box",
   zIndex: 2,
+
   flexDirection: "column",
 };
 
@@ -92,12 +93,15 @@ const bubbleBodyStyle: CSSProperties = {
 const bubbleTailStyle: CSSProperties = {
   position: "absolute",
   top: "460px",
-  right: "270px",
+  left: "270px",
   zIndex: 1,
+  transform: "scaleX(-1)",
 };
 
 /** 텍스트 스타일 */
 const bubbleTextStyle: CSSProperties = {
+  position: "absolute",
+  top: "50px",
   fontFamily: "KoddiUD OnGothic",
   fontWeight: 400,
   fontSize: "80px",
@@ -105,9 +109,11 @@ const bubbleTextStyle: CSSProperties = {
   lineHeight: "117px",
   color: "#000000",
 };
+
 const smallTextStyle: CSSProperties = {
   position: "absolute",
   bottom: "20px",
+  right: "50px",
   fontFamily: "KoddiUD OnGothic",
   fontWeight: 400,
   fontSize: "30px",
@@ -118,7 +124,7 @@ const imageStyle: CSSProperties = {
   width: "319px",
   height: "319px",
   bottom: "-10px",
-  right: "30px",
+  left: "30px",
   zIndex: 4,
   pointerEvents: "none",
 };
@@ -136,7 +142,7 @@ const GwangjulogoStyle: CSSProperties = {
   zIndex: 4,
   width: "200px",
   height: "auto",
-  left: "20px",
+  right: "20px",
 };
 const topimageStyle: CSSProperties = {
   position: "absolute",
@@ -160,7 +166,7 @@ function renderMultiline(content: string) {
   return content.split("\n").map((line, idx) => <div key={idx}>{line}</div>);
 }
 
-export default function BubbleLayout({
+export default function BubbleLayout2({
   title,
   topImage,
   content,

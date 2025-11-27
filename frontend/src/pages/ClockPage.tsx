@@ -98,10 +98,6 @@ export default function ClockPage() {
         setError(null);
         const data = await getHeaderStatus("Gwangju");
         setHeaderStatus(data);
-
-        if (data.now_iso) {
-          setNow(new Date(data.now_iso));
-        }
       } catch (e) {
         console.error(e);
         setError("상태 정보를 불러오는 중 오류가 발생했습니다.");

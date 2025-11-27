@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 // 언니 여기예요1🦊🐰
 import { sttAndMinwon } from "../services/sttService";
 import { requestTts } from "../services/ttsService";
+import SpeakerImg from "../assets/speaker.png";
 
 export default function ListeningPage() {
   const navigate = useNavigate();
@@ -13,7 +14,7 @@ export default function ListeningPage() {
   const [error, setError] = useState<string | null>(null);
   const [sttResult, setSttResult] = useState<string>("");
   const [ttsUrl, setTtsUrl] = useState<string | null>(null); // 🔹 TTS 오디오 URL
-
+  const [volume, setVolume] = useState(0);
   // 🔹 녹음 관련 ref들
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -79,9 +80,8 @@ export default function ListeningPage() {
         source.connect(analyser);
         analyserRef.current = analyser;
 
-        // 파형 그리기 시작
-        if (canvasRef.current && analyserRef.current) {
-          drawWaveform();
+        if (analyserRef.current) {
+          trackVolume();
         }
 
         // 자동 녹음 시작
@@ -123,61 +123,31 @@ export default function ListeningPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 🔹 캔버스에 실시간 파형 그리는 함수
-  const drawWaveform = () => {
-    const canvas = canvasRef.current;
+  const trackVolume = () => {
     const analyser = analyserRef.current;
-    const audioCtx = audioContextRef.current;
-
-    if (!canvas || !analyser || !audioCtx) return;
-
-    const canvasCtx = canvas.getContext("2d");
-    if (!canvasCtx) return;
+    if (!analyser) return;
 
     const bufferLength = analyser.fftSize;
     const dataArray = new Uint8Array(bufferLength);
 
-    const draw = () => {
-      animationFrameRef.current = requestAnimationFrame(draw);
+    const update = () => {
+      animationFrameRef.current = requestAnimationFrame(update);
 
       analyser.getByteTimeDomainData(dataArray);
 
-      const { width, height } = canvas;
-      canvasCtx.clearRect(0, 0, width, height);
-
-      // 배경
-      canvasCtx.fillStyle = "#CBF3C7";
-      canvasCtx.fillRect(0, 0, width, height);
-
-      // 파형 스타일
-      canvasCtx.lineWidth = 3;
-      canvasCtx.strokeStyle = "#4E9948";
-
-      canvasCtx.beginPath();
-
-      const sliceWidth = (width * 1.0) / bufferLength;
-      let x = 0;
-
+      let sum = 0;
       for (let i = 0; i < bufferLength; i++) {
-        const value = dataArray[i] ?? 128; // 기본값 128 → 중앙선
-        const v = value / 128.0;
-        const y = (v * height) / 2;
-        if (i === 0) {
-          canvasCtx.moveTo(x, y);
-        } else {
-          canvasCtx.lineTo(x, y);
-        }
-
-        x += sliceWidth;
+        const v = (dataArray[i] ?? 128) - 128;
+        sum += Math.abs(v);
       }
+      const avg = sum / bufferLength; // 0~128
+      const normalized = Math.min(avg / 64, 1); // 0~1 범위로 정규화
 
-      canvasCtx.lineTo(width, height / 2);
-      canvasCtx.stroke();
+      setVolume(normalized);
     };
 
-    draw();
+    update();
   };
-
   const stopVisualizer = () => {
     // 애니메이션 루프 중지
     if (animationFrameRef.current !== null) {
@@ -283,30 +253,31 @@ export default function ListeningPage() {
     >
       <div
         style={{
-          background: "#CBF3C7",
-          padding: "16px 24px",
-          borderRadius: "24px",
-          fontSize: "20px",
-          lineHeight: 1.4,
-          textAlign: "center",
-          width: "90%",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          flexDirection: "column",
+          marginTop: "25px",
         }}
       >
-        {/* 파형 캔버스 */}
-        <canvas
-          ref={canvasRef}
-          width={600}
-          height={120}
+        <img
+          src={SpeakerImg}
+          alt="speaker"
           style={{
-            display: "block",
-            margin: "0 auto 16px",
-            borderRadius: "16px",
+            width: "230px",
+            height: "230px",
+            marginBottom: "20px",
+            transition: "transform 0.05s linear",
+            transform: `scale(${1 + Math.sin(volume * 10) * 0.2})`,
+
+            // volume=0 → scale(1)
+            // volume=1 → scale(1.6) 정도
           }}
         />
 
         {error && <p style={{ color: "red" }}>{error}</p>}
         {isRecording && !isUploading && !error && (
-          <p>말씀하신 후 화면을 눌러 녹음을 마치고 전송해 주세요.</p>
+          <h2>말씀이 끝나면 화면을 눌러주세요</h2>
         )}
         {isUploading && <p>인식 중입니다. 잠시만 기다려 주세요...</p>}
         {sttResult && !isUploading && (

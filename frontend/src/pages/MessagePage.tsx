@@ -40,7 +40,6 @@ export default function MessagePage() {
             fontSize: "32px",
             borderRadius: "20px",
             background: "#F0F0F0",
-            border: "3px solid #ddd",
             cursor: "pointer",
           }}
         >
@@ -54,7 +53,6 @@ export default function MessagePage() {
             fontSize: "32px",
             borderRadius: "20px",
             background: "#FBDA05",
-            border: "none",
             cursor: "pointer",
           }}
         >
