@@ -1,5 +1,3 @@
-// src/services/gwangjuStateService.ts
-
 import { API_BASE_URL } from "./apiConfig";
 
 export interface WeatherInfo {
