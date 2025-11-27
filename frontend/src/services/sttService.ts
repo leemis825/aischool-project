@@ -34,12 +34,12 @@ export async function sttAndMinwon(
   if (!res.ok) {
     throw new Error(`STT+민원 엔진 요청 실패: ${res.status}`);
   }
-
-  // FastAPI schema 에서 200 응답이 "string" 이라고 되어 있어서,
-  // JSON 문자열("...")일 수도 있고, 그냥 text일 수도 있어서 둘 다 대비
   try {
-    return JSON.parse(raw) as string; // "요약문" 형태
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "string") return parsed;
+    if (parsed?.text) return parsed.text;
+    return String(parsed);
   } catch {
-    return raw; // 그냥 텍스트면 그대로 반환
+    return raw;
   }
 }

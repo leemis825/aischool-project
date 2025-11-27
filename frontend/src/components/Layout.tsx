@@ -1,5 +1,6 @@
 import type { ReactNode, CSSProperties } from "react";
 import Logo from "../assets/logo2.png";
+import GwangjuLogo from "../assets/gwangju_logo.png";
 
 interface LayoutProps {
   title: string;
@@ -7,6 +8,7 @@ interface LayoutProps {
   content?: string;
   footerImage?: string;
   children?: ReactNode;
+  image?: string;
   onClick?: () => void;
 }
 const screenWrapperStyle: CSSProperties = {
@@ -77,22 +79,32 @@ const titleStyle: CSSProperties = {
 
 const whiteCardStyle: CSSProperties = {
   position: "absolute",
-  bottom: 0,
   width: "100vw",
-  height: "500px",
+  height: "410px",
   background: "#FFFFFF",
-  borderRadius: "100px 100px 0 0",
-
+  borderRadius: "100px",
+  top: "160px",
   display: "flex",
   flexDirection: "column",
   alignItems: "center",
   paddingTop: "160px", // content와 topWhite 사이 공간
+  overflow: "hidden",
 };
 const topimageStyle: CSSProperties = {
   position: "absolute",
   top: "19px",
   left: "60px",
   zIndex: 4,
+};
+
+const imageStyle: CSSProperties = {
+  position: "absolute",
+  width: "319px",
+  height: "319px",
+  bottom: "0px",
+  right: "10px",
+  zIndex: 4,
+  pointerEvents: "none",
 };
 
 /* 본문 내용 */
@@ -105,7 +117,7 @@ const contentStyle: CSSProperties = {
   fontWeight: 700,
   fontSize: "100px",
   color: "#000000",
-  top: "-100px",
+  top: "-120px",
 };
 
 const childrenWrapperStyle: CSSProperties = {
@@ -113,7 +125,7 @@ const childrenWrapperStyle: CSSProperties = {
   width: "100%",
   display: "flex",
   justifyContent: "center",
-  marginTop: "-60px",
+  marginTop: "-110px",
 };
 
 const footerImageStyle: CSSProperties = {
@@ -121,6 +133,15 @@ const footerImageStyle: CSSProperties = {
   bottom: "-23px",
   right: "40px",
   pointerEvents: "none",
+};
+
+const GwangjulogoStyle: CSSProperties = {
+  position: "absolute",
+  bottom: "-50px",
+  zIndex: 4,
+  width: "200px",
+  height: "auto",
+  left: "20px",
 };
 
 function renderMultiline(content: string) {
@@ -133,6 +154,7 @@ export default function Layout({
   topImage,
   footerImage,
   children,
+  image,
   onClick,
 }: LayoutProps) {
   return (
@@ -157,6 +179,8 @@ export default function Layout({
           />
         )}
       </div>
+      {image && <img src={image} style={imageStyle} />}
+      <img src={GwangjuLogo} alt="gwangju" style={GwangjulogoStyle} />
     </div>
   );
 }
