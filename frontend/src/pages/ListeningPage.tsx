@@ -1,6 +1,9 @@
 import { useNavigate } from "react-router-dom";
 import Layout from "../components/Layout.js";
 import { useEffect, useRef, useState } from "react";
+// 언니 여기예요1🦊🐰
+import { sttAndMinwon } from "../services/sttService";
+import { requestTts } from "../services/ttsService";
 
 export default function ListeningPage() {
   const navigate = useNavigate();
@@ -195,8 +198,8 @@ export default function ListeningPage() {
     ctx.fillRect(0, 0, width, height);
   };
 
-  // 🔹 텍스트를 /tts 로 보내서 음성(mp3)을 받아오는 함수
-  const requestTTS = async (text: string) => {
+  // 언니 여기예요2🦊🐰
+  const callTTS = async (text: string) => {
     try {
       const trimmed = text?.trim();
       if (!trimmed) return;
@@ -206,19 +209,7 @@ export default function ListeningPage() {
         URL.revokeObjectURL(ttsUrl);
       }
 
-      const res = await fetch("http://localhost:8000/tts", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ text: trimmed }),
-      });
-
-      if (!res.ok) {
-        throw new Error("TTS 요청 실패");
-      }
-
-      const blob = await res.blob();
+      const blob = await requestTts(trimmed); // ← 서비스 함수 호출
       const url = URL.createObjectURL(blob);
       setTtsUrl(url);
     } catch (e) {
@@ -226,7 +217,6 @@ export default function ListeningPage() {
       setError("안내 음성을 불러오는 중 오류가 발생했어요.");
     }
   };
-
   // 🔹 Blob을 받아서 /stt 로 업로드
   const uploadBlob = async (blob: Blob) => {
     setError(null);
@@ -237,31 +227,22 @@ export default function ListeningPage() {
       console.log("타입:", blob.type);
       const file = new File([blob], "voice.webm", { type: "audio/webm" });
       console.log("🎤생성된 File:", file);
-      const form = new FormData();
-      form.append("audio", file);
 
-      const res = await fetch("http://localhost:8000/stt", {
-        method: "POST",
-        body: form,
-      });
+      // 언니 여기예요3🦊🐰
+      const resultText = await sttAndMinwon(file);
+      console.log("🔊 STT+민원 엔진 결과:", resultText);
 
-      if (!res.ok) {
-        throw new Error("업로드 실패");
-      }
-
-      const data = await res.json();
-      console.log("🔊 /stt 응답:", data);
-
-      setSttResult(data.text || "(빈 텍스트)");
+      const finalText = resultText || "(빈 텍스트)";
+      setSttResult(finalText);
       setIsUploading(false);
 
       // 🔹 STT 결과를 음성으로도 안내
-      await requestTTS(
-        data.text || "민원이 접수되었습니다. 잠시만 기다려 주세요."
+      await callTTS(
+        finalText || "민원이 접수되었습니다. 잠시만 기다려 주세요."
       );
 
-      // 나중에 summary 페이지 연결
-      // navigate("/summary", { state: { sttText: data.text, ... } });
+      // 나중에 summary 페이지로 이동하려면 여기에서 navigate
+      // navigate("/summary", { state: { sttText: finalText } });
     } catch (e) {
       console.error(e);
       setError("녹음 처리 중 오류가 발생했어요. 다시 시도해 주세요.");
