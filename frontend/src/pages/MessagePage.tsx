@@ -22,7 +22,7 @@ export default function MessagePage() {
       title="문자안내"
       image="src/assets/img2.png"
       topImage="src/assets/top.png"
-      content={`민원처리 내용을\n문자로\n받아보시겠어요?`}
+      content={`민원처리 내용을 문자로\n받아보시겠어요?`}
     >
       <div
         style={{

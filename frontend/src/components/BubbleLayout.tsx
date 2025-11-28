@@ -1,7 +1,7 @@
 import type { ReactNode, CSSProperties } from "react";
 import Polygon from "../assets/Polygon.png";
 import Logo from "../assets/logo2.png";
-import GwangjuLogo from "../assets/gwangju_logo.png";
+import GwangjuLogo from "../assets/aischool.png";
 
 interface BubbleLayoutProps {
   title: string;
@@ -62,7 +62,7 @@ const titleTextStyle: CSSProperties = {
 /** 말풍선 그룹 */
 const bubbleGroupStyle: CSSProperties = {
   position: "absolute",
-  width: "1023px",
+  width: "95vw",
   height: "540px",
   left: "50%",
   top: "50%",
@@ -73,7 +73,7 @@ const bubbleGroupStyle: CSSProperties = {
 /** 말풍선 몸통 */
 const bubbleBodyStyle: CSSProperties = {
   position: "absolute",
-  width: "1023px",
+  width: "95vw",
   height: "500.3px",
   background: "#FFFFFF",
   borderRadius: "100px",
@@ -92,7 +92,7 @@ const bubbleBodyStyle: CSSProperties = {
 const bubbleTailStyle: CSSProperties = {
   position: "absolute",
   top: "460px",
-  right: "270px",
+  right: "330px",
   zIndex: 1,
 };
 
@@ -118,7 +118,7 @@ const imageStyle: CSSProperties = {
   width: "319px",
   height: "319px",
   bottom: "-10px",
-  right: "30px",
+  right: "0px",
   zIndex: 4,
   pointerEvents: "none",
 };
@@ -132,12 +132,13 @@ const logoStyle: CSSProperties = {
 };
 const GwangjulogoStyle: CSSProperties = {
   position: "absolute",
-  bottom: "-50px",
+  bottom: "6px",
   zIndex: 4,
-  width: "200px",
+  width: "300px",
   height: "auto",
   left: "20px",
 };
+
 const topimageStyle: CSSProperties = {
   position: "absolute",
   top: "19px",

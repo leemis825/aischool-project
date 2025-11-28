@@ -2,7 +2,7 @@ import { useNavigate } from "react-router-dom";
 import Layout from "../components/Layout.js";
 import { useEffect, useRef, useState } from "react";
 // 언니 여기예요1🦊🐰
-import { sttAndMinwon } from "../services/sttService";
+import { sttAndMinwon, type SttMinwonResponse } from "../services/sttService";
 import { requestTts } from "../services/ttsService";
 import SpeakerImg from "../assets/speaker.png";
 
@@ -187,32 +187,36 @@ export default function ListeningPage() {
       setError("안내 음성을 불러오는 중 오류가 발생했어요.");
     }
   };
-  // 🔹 Blob을 받아서 /stt 로 업로드
+
   const uploadBlob = async (blob: Blob) => {
     setError(null);
 
     try {
       console.log("🎤전송할 오디오 Blob:", blob);
-      console.log("크기(bytes):", blob.size);
-      console.log("타입:", blob.type);
       const file = new File([blob], "voice.webm", { type: "audio/webm" });
-      console.log("🎤생성된 File:", file);
 
-      // 언니 여기예요3🦊🐰
-      const resultText = await sttAndMinwon(file);
-      console.log("🔊 STT+민원 엔진 결과:", resultText);
+      // 🔥 이제 여기서 객체가 돌아옴
+      const result: SttMinwonResponse = await sttAndMinwon(file);
+      console.log("🔊 STT+민원 엔진 결과:", result);
 
-      const finalText = resultText || "(빈 텍스트)";
+      const finalText = result.text || "(빈 텍스트)";
       setSttResult(finalText);
       setIsUploading(false);
 
-      // 🔹 STT 결과를 음성으로도 안내
+      // TTS는 주민 안내 멘트로 하는 것도 좋음
       await callTTS(
-        finalText || "민원이 접수되었습니다. 잠시만 기다려 주세요."
+        result.user_facing?.main_message ??
+          "민원을 인식하고 있습니다. 잠시만 기다려 주세요."
       );
 
-      // 나중에 summary 페이지로 이동하려면 여기에서 navigate
-      // navigate("/summary", { state: { sttText: finalText } });
+      // ✅ 요약(summary)을 Summary 페이지로 넘기기
+      navigate("/summary", {
+        state: {
+          sttText: finalText,
+          summary: result.staff_payload?.summary,
+          engineResult: result.engine_result,
+        },
+      });
     } catch (e) {
       console.error(e);
       setError("녹음 처리 중 오류가 발생했어요. 다시 시도해 주세요.");
@@ -229,7 +233,6 @@ export default function ListeningPage() {
     }
 
     setIsUploading(true);
-    navigate("/summary");
 
     try {
       mediaRecorderRef.current.stop();
@@ -247,7 +250,7 @@ export default function ListeningPage() {
   return (
     <Layout
       title="민원접수"
-      content="민원을 듣고 있어요"
+      content="말씀을 듣고 있어요"
       topImage="src/assets/top2.png"
       onClick={handleClick}
     >
@@ -266,20 +269,23 @@ export default function ListeningPage() {
           style={{
             width: "230px",
             height: "230px",
+            marginTop: "-50px",
             marginBottom: "20px",
             transition: "transform 0.05s linear",
-            transform: `scale(${1 + Math.sin(volume * 10) * 0.2})`,
-
-            // volume=0 → scale(1)
-            // volume=1 → scale(1.6) 정도
+            transform:
+              isRecording && !isUploading
+                ? `scale(${1 + Math.sin(volume * 10) * 0.2})` // 🔊 녹음 중에만 꿈틀
+                : "scale(1)", // 🔇 아니면 고정
           }}
+          // volume=0 → scale(1)
+          // volume=1 → scale(1.6) 정도
         />
 
         {error && <p style={{ color: "red" }}>{error}</p>}
         {isRecording && !isUploading && !error && (
-          <h2>말씀이 끝나면 화면을 눌러주세요</h2>
+          <h2>말씀이 끝나면 화면 어디든 눌러주세요</h2>
         )}
-        {isUploading && <p>인식 중입니다. 잠시만 기다려 주세요...</p>}
+        {isUploading && <h2>인식 중입니다. 잠시만 기다려 주세요...</h2>}
         {sttResult && !isUploading && (
           <>
             <p style={{ fontWeight: "bold", marginBottom: 8 }}>인식된 텍스트</p>

@@ -90,9 +90,9 @@ export default function PhonePage() {
               key={idx}
               onClick={() => handleNumberClick(label)}
               style={{
-                width: "110px",
-                height: "110px",
-                borderRadius: "50%",
+                width: "140px",
+                height: "100px",
+                borderRadius: "20px",
                 border: "3px solid #A1D56B",
                 background: "#FFFFFF",
                 boxShadow: "0px 4px 4px rgba(0,0,0,0.25)",
@@ -166,7 +166,7 @@ export default function PhonePage() {
           style={{
             marginTop: "10px",
             padding: "16px 32px",
-            borderRadius: "30px",
+            borderRadius: "20px",
             border: "none",
             background: "#A1D56B",
             color: "#FFFFFF",

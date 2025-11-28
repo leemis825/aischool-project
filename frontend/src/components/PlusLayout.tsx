@@ -1,5 +1,5 @@
 import type { ReactNode, CSSProperties } from "react";
-
+import GwangjuLogo from "../assets/aischool.png";
 interface PlusLayoutProps {
   content: string;
   des: string;
@@ -81,6 +81,15 @@ const childrenWrapperStyle: CSSProperties = {
   flexDirection: "column",
   alignItems: "center",
 };
+
+const GwangjulogoStyle: CSSProperties = {
+  position: "absolute",
+  bottom: "6px",
+  zIndex: 4,
+  width: "300px",
+  height: "auto",
+  right: "20px",
+};
 function renderMultiline(content: string) {
   return content.split("\n").map((line, idx) => <div key={idx}>{line}</div>);
 }
@@ -101,6 +110,7 @@ export default function PlusLayout({
         <div style={desStyle}>{des}</div>
         {image && <img src={image} alt="img decoration" style={imageStyle} />}
       </div>
+      <img src={GwangjuLogo} alt="gwangju" style={GwangjulogoStyle} />
     </div>
   );
 }

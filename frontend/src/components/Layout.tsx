@@ -1,6 +1,6 @@
 import type { ReactNode, CSSProperties } from "react";
 import Logo from "../assets/logo2.png";
-import GwangjuLogo from "../assets/gwangju_logo.png";
+import GwangjuLogo from "../assets/aischool.png";
 
 interface LayoutProps {
   title: string;
@@ -45,7 +45,7 @@ const titleTabStyle: CSSProperties = {
   justifyContent: "center",
   alignItems: "center",
   zIndex: 3,
-  borderBlockEnd: "5px solid #3FC160",
+  borderBlockEnd: "5px solid #668b5a",
 };
 
 const titleTextStyle: CSSProperties = {
@@ -79,7 +79,7 @@ const titleStyle: CSSProperties = {
 
 const whiteCardStyle: CSSProperties = {
   position: "absolute",
-  width: "100vw",
+  width: "95vw",
   height: "410px",
   background: "#FFFFFF",
   borderRadius: "100px",
@@ -89,6 +89,7 @@ const whiteCardStyle: CSSProperties = {
   alignItems: "center",
   paddingTop: "160px", // content와 topWhite 사이 공간
   overflow: "hidden",
+  borderBlockEnd: "8px solid #668b5a",
 };
 const topimageStyle: CSSProperties = {
   position: "absolute",
@@ -114,10 +115,13 @@ const contentStyle: CSSProperties = {
   height: "auto",
   textAlign: "center",
   fontFamily: "KoddiUD OnGothic",
-  fontWeight: 700,
-  fontSize: "100px",
+  fontWeight: 500,
+  fontSize: "90px",
   color: "#000000",
   top: "-120px",
+  lineHeight: "120px",
+  marginBottom: "40px",
+  marginTop: "20px",
 };
 
 const childrenWrapperStyle: CSSProperties = {
@@ -137,9 +141,9 @@ const footerImageStyle: CSSProperties = {
 
 const GwangjulogoStyle: CSSProperties = {
   position: "absolute",
-  bottom: "-50px",
+  bottom: "6px",
   zIndex: 4,
-  width: "200px",
+  width: "300px",
   height: "auto",
   left: "20px",
 };
