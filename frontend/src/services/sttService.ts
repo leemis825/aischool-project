@@ -1,24 +1,51 @@
+// src/services/sttService.ts
 import { API_BASE_URL } from "./apiConfig";
 
-/**
- * /stt
- * 프론트에서 녹음한 음성 파일(webm/mp3 등)을 업로드하면
- * 1) OpenAI Whisper로 STT (ko)
- * 2) 변환된 텍스트를 민원 엔진에 넣어 분류/요약
- * 까지 처리한 결과를 문자열로 반환하는 API
- *
- * FastAPI 쪽 시그니처가 대략:
- *   async def stt_and_minwon(audio: UploadFile = File(...))
- * 이런 형태일 거라서, 필드 이름을 "audio"로 맞춤.
- */
+export interface UserFacing {
+  short_title: string;
+  main_message: string;
+  next_action_guide: string;
+  phone_suggestion: string;
+  confirm_question: string;
+}
+
+export interface StaffPayload {
+  summary: string;
+  category: string;
+  location: string;
+  time_info: string;
+  risk_level: string;
+  needs_visit: boolean;
+  citizen_request: string;
+  raw_keywords: string[];
+  memo_for_staff: string;
+}
+
+export interface EngineResult {
+  stage: string;
+  minwon_type: string;
+  handling_type: string;
+  need_call_transfer: boolean;
+  need_official_ticket: boolean;
+  user_facing: UserFacing;
+  staff_payload: StaffPayload;
+}
+
+export interface SttMinwonResponse {
+  session_id: string;
+  text: string;
+  engine_result: EngineResult;
+  user_facing: UserFacing;
+  staff_payload: StaffPayload;
+}
 
 export async function sttAndMinwon(
   audioFile: File | Blob,
-  filename: string = "record.webm"
-): Promise<string> {
+  filename: string = "voice.webm"
+): Promise<SttMinwonResponse> {
   const url = `${API_BASE_URL}/stt`;
+
   const formData = new FormData();
-  // FastAPI UploadFile 파라미터 이름에 맞춰야 함 (audio)
   formData.append("audio", audioFile, (audioFile as File).name ?? filename);
 
   console.log("📡 calling STT+Minwon:", url);
@@ -34,12 +61,7 @@ export async function sttAndMinwon(
   if (!res.ok) {
     throw new Error(`STT+민원 엔진 요청 실패: ${res.status}`);
   }
-  try {
-    const parsed = JSON.parse(raw);
-    if (typeof parsed === "string") return parsed;
-    if (parsed?.text) return parsed.text;
-    return String(parsed);
-  } catch {
-    return raw;
-  }
+
+  const data = JSON.parse(raw) as SttMinwonResponse;
+  return data;
 }

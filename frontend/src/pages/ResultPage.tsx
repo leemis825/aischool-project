@@ -14,7 +14,7 @@ export default function ResultPage() {
       image="src/assets/img1.png"
       topImage="src/assets/top.png"
       content="AI 대답 내보내기"
-      content2="확인 후 화면을 눌러주세요."
+      content2="확인 후 화면 어디든 눌러주세요."
     ></BubbleLayout>
   );
 }
