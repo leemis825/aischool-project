@@ -21,7 +21,7 @@ export default function MessagePage() {
       //onClick={handleClick}
       title="문자안내"
       image="src/assets/img2.png"
-      topImage="src/assets/top.png"
+      topImage="src/assets/top2.png"
       content={`민원처리 내용을 문자로\n받아보시겠어요?`}
     >
       <div

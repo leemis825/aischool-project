@@ -297,7 +297,7 @@ export default function ReListeningPage() {
     <Layout
       title="민원접수"
       content="말씀해주세요"
-      topImage="src/assets/dog2.png"
+      topImage="src/assets/top2.png"
       onClick={handleClick}
     >
       <div

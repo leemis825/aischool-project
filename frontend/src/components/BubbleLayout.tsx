@@ -8,6 +8,7 @@ interface BubbleLayoutProps {
   topImage?: string;
   content?: string;
   content2?: string;
+  content3?: string;
   children?: ReactNode;
   image?: string;
   onClick?: () => void;
@@ -48,7 +49,7 @@ const titleTabStyle: CSSProperties = {
   justifyContent: "center",
   alignItems: "center",
   zIndex: 3,
-  borderBlockEnd: "5px solid #3FC160",
+  borderBlockEnd: "6px solid #668b5a",
 };
 
 const titleTextStyle: CSSProperties = {
@@ -111,8 +112,15 @@ const smallTextStyle: CSSProperties = {
   fontFamily: "KoddiUD OnGothic",
   fontWeight: 400,
   fontSize: "30px",
+  left: "130px",
 };
-
+const smallTextStyle2: CSSProperties = {
+  position: "absolute",
+  bottom: "20px",
+  fontFamily: "KoddiUD OnGothic",
+  fontWeight: 400,
+  fontSize: "30px",
+};
 const imageStyle: CSSProperties = {
   position: "absolute",
   width: "319px",
@@ -166,6 +174,7 @@ export default function BubbleLayout({
   topImage,
   content,
   content2,
+  content3,
   children,
   image,
   onClick,
@@ -189,6 +198,9 @@ export default function BubbleLayout({
           )}
           {content2 && (
             <div style={smallTextStyle}>{renderMultiline(content2)}</div>
+          )}
+          {content3 && (
+            <div style={smallTextStyle2}>{renderMultiline(content3)}</div>
           )}
         </div>
         <img src={Polygon} alt="tail" style={bubbleTailStyle} />

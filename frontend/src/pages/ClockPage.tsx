@@ -1,31 +1,12 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
+import Logo from "../assets/logo2.png";
+import Clock from "../assets/img0.png";
 import {
   getHeaderStatus,
   type HeaderStatus,
 } from "../services/gwangjuStateService";
-
-const wrapperStyle: CSSProperties = {
-  width: "100vw",
-  height: "100vh",
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "center",
-  overflow: "hidden",
-};
-
-const cardStyle: CSSProperties = {
-  width: "100vw",
-  height: "100vh",
-  borderRadius: "24px",
-  paddingTop: "100px",
-  display: "flex",
-  flexDirection: "column",
-  justifyContent: "space-between",
-  cursor: "pointer",
-  alignItems: "center",
-};
 
 const topRowStyle: CSSProperties = {
   display: "flex",
@@ -33,8 +14,9 @@ const topRowStyle: CSSProperties = {
   fontSize: "40px",
   fontFamily: "KoddiUD OnGothic",
   width: "100%",
-  paddingRight: "120px",
+  paddingRight: "160px",
   fontWeight: 800,
+  marginTop: "-90px",
 };
 
 const dateBlockStyle: CSSProperties = {
@@ -44,13 +26,13 @@ const dateBlockStyle: CSSProperties = {
 };
 
 const dateStyle: CSSProperties = {
-  fontSize: "100px",
+  fontSize: "90px",
   fontWeight: 600,
   fontFamily: "KoddiUD OnGothic",
 };
 
 const lunarStyle: CSSProperties = {
-  fontSize: "60px",
+  fontSize: "50px",
   fontWeight: 600,
   opacity: 0.7,
   fontFamily: "KoddiUD OnGothic",
@@ -58,12 +40,53 @@ const lunarStyle: CSSProperties = {
 };
 
 const timeStyle: CSSProperties = {
-  fontSize: "350px",
+  fontSize: "250px",
   fontWeight: 700,
   letterSpacing: "0.07em",
   fontFamily: "Lab",
   marginTop: " -50px",
   marginBottom: "50px",
+};
+
+const screenWrapperStyle: CSSProperties = {
+  width: "100vw",
+  height: "100%",
+  display: "flex",
+  justifyContent: "center",
+  alignItems: "center",
+  background: "rgba(142, 209, 71, 0.77)",
+  position: "relative",
+};
+const floatingClockStyle: CSSProperties = {
+  position: "absolute",
+  width: "60px",
+  height: "60px",
+  zIndex: 2,
+};
+
+const whiteCardStyle: CSSProperties = {
+  position: "absolute",
+  width: "95vw",
+  height: "520px",
+  background: "#FFFFFF",
+  borderRadius: "100px",
+  top: "90px",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  paddingTop: "160px", // content와 topWhite 사이 공간
+  overflow: "hidden",
+  borderBlockEnd: "8px solid #668b5a",
+  borderRight: "8px solid #668b5a",
+};
+
+const logoStyle: CSSProperties = {
+  position: "absolute",
+  top: "20px",
+  right: "20px",
+  width: "180px",
+  height: "auto",
+  zIndex: 4,
 };
 
 function formatDate(date: Date) {
@@ -146,9 +169,16 @@ export default function ClockPage() {
   }
 
   return (
-    <div style={wrapperStyle} onClick={handleClick}>
-      <div style={cardStyle}>
-        {/* 절기 + 날씨 */}
+    <div style={screenWrapperStyle} onClick={handleClick}>
+      <img src={Logo} alt="head" style={logoStyle} />
+
+      <img
+        src={Clock}
+        alt="floating"
+        className="float-free-wide"
+        style={floatingClockStyle}
+      />
+      <div style={whiteCardStyle}>
         <div style={topRowStyle}>
           <span>
             {solarTerm} · {weatherText}

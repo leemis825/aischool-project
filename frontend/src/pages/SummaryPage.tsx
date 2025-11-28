@@ -1,6 +1,4 @@
 import { useNavigate, useLocation } from "react-router-dom";
-import PlusLayout from "../components/PlusLayout.js";
-import BubbleLayout2 from "../components/BubbleLayout2.js";
 import BubbleLayout from "../components/BubbleLayout.js";
 
 export default function SummaryPage() {
@@ -24,9 +22,10 @@ export default function SummaryPage() {
 
   return (
     <BubbleLayout
-      title="민원요약"
+      title="민원확인"
+      topImage="src/assets/top2.png"
       content={summary ?? "요약 정보를 불러올 수 없습니다."}
-      content2="요약 내용이 맞으시면 [예] 아니면 [재질문]을 눌러주세요"
+      content2="요약 내용이 맞으시면 [예] 아니면 [재질문]을 눌러주세요."
       image="src/assets/img5.png"
     >
       <div
