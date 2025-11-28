@@ -58,7 +58,7 @@ const desStyle: CSSProperties = {
 const imageStyle: CSSProperties = {
   position: "absolute",
   bottom: "0",
-  left: "20px",
+  left: "0px",
 };
 
 const bottomAreaStyle: CSSProperties = {

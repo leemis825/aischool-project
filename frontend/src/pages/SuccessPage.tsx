@@ -18,7 +18,7 @@ export default function SuccessPage() {
       //onClick={handleClick}
       title="접수완료"
       image="src/assets/img2.png"
-      topImage="src/assets/top.png"
+      topImage="src/assets/top2.png"
       content={`[무슨무슨기관] 으로\n민원이\n접수되었습니다.`}
     ></BubbleLayout>
   );

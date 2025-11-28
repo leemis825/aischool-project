@@ -286,16 +286,10 @@ export default function ListeningPage() {
           <h2>말씀이 끝나면 화면 어디든 눌러주세요</h2>
         )}
         {isUploading && <h2>인식 중입니다. 잠시만 기다려 주세요...</h2>}
-        {sttResult && !isUploading && (
-          <>
-            <p style={{ fontWeight: "bold", marginBottom: 8 }}>인식된 텍스트</p>
-            <p>{sttResult}</p>
-          </>
-        )}
+        {sttResult && !isUploading}
 
         {ttsUrl && !isUploading && (
           <div style={{ marginTop: 16 }}>
-            <p style={{ fontWeight: "bold", marginBottom: 4 }}>안내 음성</p>
             <audio src={ttsUrl} controls autoPlay />
           </div>
         )}

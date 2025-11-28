@@ -45,7 +45,7 @@ const titleTabStyle: CSSProperties = {
   justifyContent: "center",
   alignItems: "center",
   zIndex: 3,
-  borderBlockEnd: "5px solid #668b5a",
+  borderBlockEnd: "6px solid #668b5a",
 };
 
 const titleTextStyle: CSSProperties = {

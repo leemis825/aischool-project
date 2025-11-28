@@ -12,9 +12,9 @@ export default function ResultPage() {
       onClick={handleClick}
       title="결과확인"
       image="src/assets/img1.png"
-      topImage="src/assets/top.png"
+      topImage="src/assets/top2.png"
       content="AI 대답 내보내기"
-      content2="확인 후 화면 어디든 눌러주세요."
+      content3="확인 후 화면 어디든 눌러주세요."
     ></BubbleLayout>
   );
 }
