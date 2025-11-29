@@ -102,6 +102,37 @@ button:focus-visible {
     font-style: normal;
     font-display: swap;
   }
+  @font-face {
+    font-family: "surround";
+    src: url("/fonts/Cafe24Ssurround-v2.0.woff2") format("woff2");
+    font-style: normal;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "surround-light";
+    src: url("/fonts/Cafe24SsurroundAir-v1.1.woff2") format("woff2");
+    font-style: normal;
+    font-display: swap;
+  }
+
+  @font-face {
+    font-family: "giant-regular";
+    src: url("/fonts/11zon_Giants-Regular.woff2") format("woff2");
+    font-style: normal;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "all-bold";
+    src: url("/fonts/11zon_Hakgyoansim Allimjang OTF B.woff2") format("woff2");
+    font-style: normal;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "all-regular";
+    src: url("/fonts/11zon_Hakgyoansim Allimjang OTF R.woff2") format("woff2");
+    font-style: normal;
+    font-display: swap;
+  }
 }
 
 @keyframes floatFreeWide {

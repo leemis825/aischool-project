@@ -12,7 +12,7 @@ const topRowStyle: CSSProperties = {
   display: "flex",
   justifyContent: "flex-end",
   fontSize: "40px",
-  fontFamily: "KoddiUD OnGothic",
+  fontFamily: "surround",
   width: "100%",
   paddingRight: "160px",
   fontWeight: 800,
@@ -28,14 +28,14 @@ const dateBlockStyle: CSSProperties = {
 const dateStyle: CSSProperties = {
   fontSize: "90px",
   fontWeight: 600,
-  fontFamily: "KoddiUD OnGothic",
+  fontFamily: "surround",
 };
 
 const lunarStyle: CSSProperties = {
   fontSize: "50px",
   fontWeight: 600,
   opacity: 0.7,
-  fontFamily: "KoddiUD OnGothic",
+  fontFamily: "surround",
   alignSelf: "flex-end",
 };
 

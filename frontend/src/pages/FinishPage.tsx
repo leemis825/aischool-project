@@ -8,15 +8,16 @@ export default function FinishPage() {
   useEffect(() => {
     const timer = setTimeout(() => {
       navigate("/");
-    }, 5000); // 10초
+    }, 10000); // 10초
 
     return () => clearTimeout(timer); // cleanup
   }, [navigate]);
   return (
     <PlusLayout
       des=" "
-      content={`궁금하신 내용이 있으면\n언제든 말씀해주세요.\n감사합니다.`}
+      content={`필요하시면 또 불러주세요\n감사합니다`}
       image="src/assets/img4.png"
+      children="시간이 지나면 자동으로 처음 화면으로 돌아갑니다."
     ></PlusLayout>
   );
 }

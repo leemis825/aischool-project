@@ -49,9 +49,9 @@ const titleTabStyle: CSSProperties = {
 };
 
 const titleTextStyle: CSSProperties = {
-  fontFamily: "KoddiUD OnGothic",
+  fontFamily: "surround",
   fontWeight: 800,
-  fontSize: "75px",
+  fontSize: "65px",
   lineHeight: "92px",
   color: "#000000",
 };
@@ -71,7 +71,7 @@ const titleStyle: CSSProperties = {
   top: "10px",
   width: "100%",
   textAlign: "center",
-  fontFamily: "KoddiUD OnGothic",
+  fontFamily: "surround",
   fontWeight: 800,
   fontSize: "75px",
   color: "#000000",
@@ -114,9 +114,9 @@ const contentStyle: CSSProperties = {
   width: "100%",
   height: "auto",
   textAlign: "center",
-  fontFamily: "KoddiUD OnGothic",
+  fontFamily: "all-bold",
   fontWeight: 500,
-  fontSize: "90px",
+  fontSize: "80px",
   color: "#000000",
   top: "-120px",
   lineHeight: "120px",
@@ -130,6 +130,7 @@ const childrenWrapperStyle: CSSProperties = {
   display: "flex",
   justifyContent: "center",
   marginTop: "-110px",
+  fontFamily: "surround",
 };
 
 const footerImageStyle: CSSProperties = {
