@@ -53,9 +53,9 @@ const titleTabStyle: CSSProperties = {
 };
 
 const titleTextStyle: CSSProperties = {
-  fontFamily: "KoddiUD OnGothic",
+  fontFamily: "surround",
   fontWeight: 800,
-  fontSize: "75px",
+  fontSize: "65px",
   lineHeight: "92px",
   color: "#000000",
 };
@@ -99,7 +99,7 @@ const bubbleTailStyle: CSSProperties = {
 
 /** 텍스트 스타일 */
 const bubbleTextStyle: CSSProperties = {
-  fontFamily: "KoddiUD OnGothic",
+  fontFamily: "all-bold",
   fontWeight: 400,
   fontSize: "80px",
   textAlign: "center",
@@ -109,15 +109,15 @@ const bubbleTextStyle: CSSProperties = {
 const smallTextStyle: CSSProperties = {
   position: "absolute",
   bottom: "20px",
-  fontFamily: "KoddiUD OnGothic",
+  fontFamily: "surround",
   fontWeight: 400,
   fontSize: "30px",
   left: "130px",
 };
 const smallTextStyle2: CSSProperties = {
   position: "absolute",
-  bottom: "20px",
-  fontFamily: "KoddiUD OnGothic",
+  bottom: "-100px",
+  fontFamily: "surround",
   fontWeight: 400,
   fontSize: "30px",
 };
@@ -163,6 +163,7 @@ const childrenBelowStyle: CSSProperties = {
   display: "flex",
   justifyContent: "center",
   zIndex: 3,
+  fontFamily: "surround",
 };
 
 function renderMultiline(content: string) {

@@ -37,7 +37,7 @@ export default function PhonePage() {
       <div
         style={{
           marginLeft: "60px",
-          marginRight: "100px",
+          marginRight: "50px",
           display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)",
           gridTemplateRows: "repeat(4, 1fr)",
@@ -96,9 +96,9 @@ export default function PhonePage() {
                 border: "3px solid #A1D56B",
                 background: "#FFFFFF",
                 boxShadow: "0px 4px 4px rgba(0,0,0,0.25)",
-                fontFamily: "KoddiUD OnGothic",
+                fontFamily: "all-bold",
                 fontWeight: 800,
-                fontSize: "45px",
+                fontSize: "50px",
                 lineHeight: "85px",
                 display: "flex",
                 alignItems: "center",
@@ -125,9 +125,9 @@ export default function PhonePage() {
       >
         <div
           style={{
-            fontFamily: "KoddiUD OnGothic",
+            fontFamily: "all-bold",
             fontWeight: 400,
-            fontSize: "50px",
+            fontSize: "55px",
             lineHeight: "70px",
             textAlign: "left",
             marginBottom: "60px",
@@ -141,7 +141,7 @@ export default function PhonePage() {
 
         <div
           style={{
-            fontFamily: "KoddiUD OnGothic",
+            fontFamily: "all-regular",
             fontWeight: 400,
             fontSize: "50px",
             lineHeight: "61px",
@@ -168,10 +168,10 @@ export default function PhonePage() {
             padding: "16px 32px",
             borderRadius: "20px",
             border: "none",
-            background: "#A1D56B",
-            color: "#FFFFFF",
+            background: "#FBDA05",
+            color: "black",
             fontSize: "32px",
-            fontFamily: "KoddiUD OnGothic",
+            fontFamily: "all-regular",
             fontWeight: 700,
             cursor: "pointer",
           }}

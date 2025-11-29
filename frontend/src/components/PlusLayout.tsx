@@ -36,7 +36,7 @@ const contentStyle: CSSProperties = {
   position: "relative",
   width: "100%",
   textAlign: "center",
-  fontFamily: "KoddiUD OnGothic",
+  fontFamily: "all-bold",
   fontWeight: 700,
   fontSize: "90px",
   color: "#000000",
@@ -48,7 +48,7 @@ const desStyle: CSSProperties = {
   marginLeft: "350px",
   marginTop: "50px",
   textAlign: "center",
-  fontFamily: "KoddiUD OnGothic",
+  fontFamily: "surround",
   fontWeight: 600,
   fontSize: "50px",
   color: "#000000",
@@ -72,14 +72,11 @@ const bottomAreaStyle: CSSProperties = {
   whiteSpace: "pre-line",
 };
 const childrenWrapperStyle: CSSProperties = {
-  position: "absolute",
-  top: "55%", // 화면 세로 기준 위치 (원하면 조절 가능)
-  left: "50%",
-  transform: "translate(-50%, -50%)", // 가운데 정렬
-  width: "100%",
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
+  position: "relative",
+  left: "340px",
+  top: "260px",
+  fontSize: "35px",
+  fontFamily: "surround",
 };
 
 const GwangjulogoStyle: CSSProperties = {
