@@ -1,4 +1,3 @@
-// src/services/minwonTextTurnService.ts
 
 import { API_BASE_URL } from "./apiConfig";
 
