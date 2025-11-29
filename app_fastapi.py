@@ -22,7 +22,15 @@ from openai import OpenAI
 
 from dotenv import load_dotenv
 from speaker.stt_whisper import transcribe_bytes
+from brain import minwon_engine
 from brain.minwon_engine import run_pipeline_once  # 민원 엔진
+
+# 추가
+from brain.text_session_state import TextSessionState
+from brain.turn_router import choose_issue_for_followup
+
+# 기존 TEXT_SESSIONS를 아래와 같이 교체
+TEXT_SESSIONS: Dict[str, TextSessionState] = {}
 
 load_dotenv()  # .env 읽어오기
 
@@ -109,6 +117,14 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY)
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "gpt-4o-mini-transcribe")
 CHAT_MODEL = os.getenv("OPENAI_TRANSLATION_MODEL", "gpt-4o-mini")
 
+#------------------------세션관리----------------------
+def get_state(session_id: str) -> TextSessionState:
+    if session_id not in TEXT_SESSIONS:
+        TEXT_SESSIONS[session_id] = TextSessionState()
+        log_event(session_id, {"type": "session_start", "source": "stt_or_text"})
+    return TEXT_SESSIONS[session_id]
+
+
 # ============================================================
 # FastAPI 앱 기본 세팅 (Swagger 설명 포함)
 # ============================================================
@@ -142,7 +158,6 @@ app.add_middleware(
 # 텍스트 모드용 세션 상태 (메모리)
 # ============================================================
 
-TEXT_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
 
 class TextTurnRequest(BaseModel):
@@ -302,7 +317,7 @@ async def _fetch_lunar_date(today: date) -> str:
     양력 today 기준 음력 날짜(YYYY-MM-DD)를 반환.
     """
     if not KASI_SERVICE_KEY:
-        raise RuntimeError("KASI_SERVICE_KEY 환경변수가 설정되지 않았습니다.")
+        raise RuntimeError("KASI_SERVICE_KEY가 설정되지 않았습니다.")
 
     params = {
         "solYear": today.strftime("%Y"),
@@ -334,7 +349,7 @@ async def _fetch_seasonal_term(today: date) -> str:
     오늘 날짜에 해당하는 24절기 이름을 반환. 없으면 빈 문자열.
     """
     if not KASI_SERVICE_KEY:
-        raise RuntimeError("KASI_SERVICE_KEY 환경변수가 설정되지 않았습니다.")
+        raise RuntimeError("KASI_SERVICE_KEY가 설정되지 않았습니다.")
 
     params = {
         "solYear": today.strftime("%Y"),
@@ -756,117 +771,93 @@ def translate_text(text: str, target_lang: str) -> str:
         return text
 
 # ============================================================
-# 4. 음성(STT) + 민원 엔진 한 번에 처리 (한국어 전용)
+# 4. 음성(STT) + 민원 엔진 한 번에 처리 (한국어 전용, 멀티턴 지원)
 # ============================================================
 
-@app.post(
-    "/stt",
-    summary="음성 파일(STT) + 민원 엔진 한 번에 처리 (한국어 전용)",
-    tags=["stt", "minwon"],
-)
+@app.post("/stt", summary="음성 기반 민원 처리", tags=["stt"])
 async def stt_and_minwon(request: Request):
-    """
-    - FormData로 올 때는 `audio` 또는 `file` 필드 이름을 사용한다고 가정
-    - request.form() 으로 직접 파싱해서 422 문제를 피한다.
-    """
     logger.info("=== 🟦 STT 요청 도착 ===")
 
-    # 1) multipart/form-data 파싱
+    # 1) form 파싱
     try:
         form = await request.form()
-        logger.debug(f"[폼 파싱 성공] fields={list(form.keys())}")
     except Exception as e:
-        logger.error(f"[폼 파싱 실패] {e}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"폼 데이터를 읽는 중 오류가 발생했습니다: {e}",
-        )
+        raise HTTPException(400, f"폼 파싱 오류: {e}")
 
-    # 2) audio 또는 file 필드에서 업로드 파일 가져오기
-    upload = form.get("audio") or form.get("file")
-
-    if upload is None:
-        logger.error("폼 데이터에 'audio' 또는 'file' 필드가 없습니다.")
-        raise HTTPException(
-            status_code=400,
-            detail="폼 데이터에 'audio' 또는 'file' 필드가 없습니다.",
-        )
-
-    # form.get(...) 결과가 UploadFile 이 아닌 경우 방어
-    if not hasattr(upload, "filename") or not hasattr(upload, "read"):
-        logger.error("업로드된 파일 형식을 인식할 수 없습니다.")
-        raise HTTPException(
-            status_code=400,
-            detail="업로드된 파일 형식을 인식할 수 없습니다.",
-        )
-
-    logger.info(f"[업로드 파일] {getattr(upload, 'filename', None)}")
-
-    # 3) 실제 바이너리 읽기
-    try:
-        audio_bytes = await upload.read()
-        logger.debug(f"[바이트 크기] {len(audio_bytes)} bytes")
-    except Exception as e:
-        logger.error(f"업로드된 파일을 읽는 중 오류: {e}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"업로드된 파일을 읽는 중 오류가 발생했습니다: {e}",
-        )
-
-    if not audio_bytes:
-        logger.error("비어 있는 오디오 파일입니다.")
-        raise HTTPException(status_code=400, detail="비어 있는 오디오 파일입니다.")
-
-    filename = upload.filename or "recording.webm"
-
-    # 4) Whisper STT 호출 (한국어 고정)
-    text = transcribe_bytes(
-        audio_bytes,
-        language="ko",
-        file_name=filename,
+    # 2) session_id 확보
+    session_id_raw = (
+        form.get("session_id")
+        or request.headers.get("X-Session-ID")
+        or request.query_params.get("session_id")
     )
-    logger.info(f"[STT 결과] {text}")
+    session_id = (session_id_raw or "").strip() or str(uuid.uuid4())
+    logger.info(f"[session_id] {session_id}")
 
-    # STT 실패
-    if not text:
-        logger.warning("STT 결과가 비어 있습니다. 엔진 호출 없이 응답 반환.")
+    # 2-1) 세션 상태 가져오기 (A/B 스레드 포함)
+    state = get_state(session_id)
+
+    # 3) 오디오 가져오기
+    upload = form.get("audio") or form.get("file")
+    if upload is None:
+        raise HTTPException(400, "오디오 파일이 없습니다.")
+
+    audio_bytes = await upload.read()
+    if not audio_bytes:
+        raise HTTPException(400, "비어 있는 오디오입니다.")
+
+    filename = upload.filename or "record.webm"
+
+    # 4) Whisper STT
+    text = transcribe_bytes(audio_bytes, language="ko", file_name=filename)
+    original = text.strip()
+    logger.info(f"[STT 결과] {original}")
+
+    if not original:
         return {
-            "session_id": None,
+            "session_id": session_id,
             "text": "",
+            "used_text": "",
             "engine_result": None,
-            "user_facing": None,
-            "staff_payload": None,
         }
 
-    # 5) 민원 엔진 1회성 실행
-    history: List[Dict[str, str]] = []
-    engine_result = run_pipeline_once(text, history)
-    logger.info("[엔진 결과]\n" + json.dumps(engine_result, ensure_ascii=False, indent=2))
+    # 5) 🔥 멀티턴(clarification) + A/B 스레드 결합
+    effective_text = state.build_effective_text(original)
 
-    # 6) 1회성 session_id 생성 (로그용)
-    session_id = str(uuid.uuid4())
-    logger.info(f"[세션 생성] {session_id}")
+    # 6) 엔진 실행
+    engine_result = run_pipeline_once(effective_text, [])
 
+    # 7) 🔥 A/B/C 이슈 라우팅 (핵심 추가)
+    turn = state.register_turn(
+        user_raw=original,
+        effective_text=effective_text,
+        engine_result=engine_result,
+    )
+    issue_id = turn.issue_id  # ← A/B/C 구분됨
+
+    # 8) 로그 기록
     log_event(
         session_id,
         {
             "type": "stt_turn",
-            "input_text": text,
+            "issue_id": issue_id,
+            "input_text": original,
+            "used_text": effective_text,
             "engine_result": engine_result,
-            "source": "stt_endpoint",
         },
     )
 
-    logger.info("=== 🟩 STT 응답 완료 ===\n")
+    logger.info("=== 🟩 STT 응답 완료 ===")
 
-    # 7) 응답 구조
     return {
         "session_id": session_id,
-        "text": text,  # 프론트 ListeningPage에서 data.text 로 사용
+        "issue_id": issue_id,                # ⭐ A/B 스레드 ID 반환
+        "text": original,
+        "used_text": effective_text,
         "engine_result": engine_result,
         "user_facing": engine_result.get("user_facing", {}),
         "staff_payload": engine_result.get("staff_payload", {}),
     }
+
 
 # ============================================================
 # TTS 요청 모델 & 엔드포인트

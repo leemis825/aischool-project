@@ -14,7 +14,10 @@
     "main_message": str,
     "next_action_guide": str,
     "phone_suggestion": str,
-    "confirm_question": str
+    "confirm_question": str,
+    "tts_listening": str,  # ListeningPage에서 읽어줄 스크립트
+    "tts_summary": str,    # SummaryPage에서 읽어줄 스크립트
+    "tts_result": str      # ResultPage에서 읽어줄 스크립트
   },
   "staff_payload": {
     "summary": str,
@@ -37,6 +40,7 @@ from typing import Any, Dict, List, Tuple, Optional  # >>> Optional 추가
 
 from dotenv import load_dotenv
 from openai import OpenAI
+
 
 # -------------------- 환경 설정 --------------------
 load_dotenv()
@@ -150,6 +154,21 @@ def extract_keywords(text: str, max_k: int = 5) -> List[str]:
     return uniq[:max_k]
 
 
+def split_additional_location(text: str) -> Tuple[str, str]:
+    """
+    '... 추가 위치 정보: ...' 패턴이 있으면
+    앞부분(사건)과 뒷부분(위치 후보)을 나눠준다.
+    없으면 (원문, "") 그대로 반환.
+    """
+    # "추가 위치 정보:" / "추가위치정보:" 등 공백·콜론 변형까지 허용
+    parts = re.split(r"추가\s*위치\s*정보\s*[:：]\s*", text, maxsplit=1)
+    if len(parts) == 2:
+        main, loc = parts[0].strip(), parts[1].strip()
+        return main, loc
+
+    return text.strip(), ""
+# -------------------- OpenAI Chat 호출 래퍼 --------------------
+
 def call_chat(messages: List[Dict[str, str]],
               model: str = MODEL,
               temperature: float = TEMP_GLOBAL,
@@ -184,23 +203,26 @@ def detect_scenario_override(text: str) -> Optional[Dict[str, Any]]:
       "needs_visit": True,
       "risk_level": "긴급",
       "handling_type": "official_ticket",
-      "need_official_ticket": True
+      "need_official_ticket": True,
+      "need_call_transfer": False
     }
     """
     t = normalize(text).replace(" ", "")
 
-    # --- 시나리오 1: 나무가 쓰러져 집 앞/골목 막음 → 도로 + 방문 필요 + 긴급 ---
-    if ("나무" in t or "가로수" in t) and \
-       ("쓰러" in t) and \
-       ("집앞" in t or "대문" in t or "골목" in t or "마을회관" in t):
-        return {
-            "scenario": 1,
-            "category": "도로",
-            "needs_visit": True,
-            "risk_level": "긴급",
-            "handling_type": "official_ticket",
-            "need_official_ticket": True,
-        }
+    # --- 시나리오 1: 나무가 쓰러져 집 앞/길/통행 막음 → 도로 + 방문 필요 + 긴급 ---
+    if ("나무" in t or "가로수" in t) and ("쓰러" in t):
+        # 위치 힌트: 집/대문/골목/마을회관/통행 등
+        if ("집앞" in t or "집에" in t or "대문" in t
+                or "골목" in t or "마을회관" in t or "통행" in t):
+            return {
+                "scenario": 1,
+                "category": "도로",
+                "needs_visit": True,
+                "risk_level": "긴급",
+                "handling_type": "official_ticket",
+                "need_official_ticket": True,
+                "need_call_transfer": False,
+            }
 
     # --- 시나리오 2: 출생연도 + 국민연금 문의 → 연금/복지 + simple_guide ---
     if ("연금" in t or "국민연금" in t) and re.search(r"19[5-9]\d년생", text):
@@ -443,7 +465,7 @@ category는 반드시 위 목록 중 하나의 '정확한 문자열'만 사용�
 
     user = f"""
 민원 내용:
-\"\"\"{text}\"\"\"
+\"\"\"{text}\"\"\"\
 
 규칙 기반으로 추정한 1차 카테고리 후보: {base_category}
 이 후보를 참고하되, 더 적절한 카테고리가 있으면 바꿔도 돼.
@@ -514,11 +536,13 @@ def summarize_for_staff(text: str, category: str) -> Dict[str, Any]:
     JSON 실패 시 안전한 기본값으로 폴백.
     """
     system = (
-        "너는 한국 지자체 민원 담당자를 위한 요약기를 돕는 어시스턴트야.\n"
-        "주어진 민원을 30글자 이내로 요약하고, 주소/위치, 발생 시각, 위험 정도를 추출해.\n"
-        "도로/시설물 민원에서는 특히 '어디인지'가 중요하니, 위치를 최대한 찾아봐.\n"
-        "JSON만 출력해. 키: summary_3lines, location, time_info, needs_visit, risk_level."
-    )  # >>> 프롬프트 (자주 고칠 부분 2)
+    "너는 한국 지자체 민원 담당자를 위한 요약기를 돕는 어시스턴트야.\n"
+    "주어진 민원을 '담당자가 보고 바로 이해할 수 있는' 짧은 한 문장으로 요약해.\n"
+    "- 30글자 안팎, 너무 길지 않게.\n"
+    "- 존댓말(요, 입니다 등) 사용하지 말고, 서술형으로 끝내. 예: '쓰러진 나무로 집 앞 통행 불가'.\n"
+    "- 추측을 늘리지 말고, 민원인이 말한 사실만 압축해서 써.\n"
+    "JSON만 출력해. 키: summary_3lines, location, time_info, needs_visit, risk_level."
+    ) # >>> 프롬프트 (자주 고칠 부분 2)
     user = f"[카테고리: {category}]\n다음 민원을 요약해줘.\n\n{text}"
     out = call_chat(
         [{"role": "system", "content": system},
@@ -546,7 +570,6 @@ def summarize_for_staff(text: str, category: str) -> Dict[str, Any]:
     data.setdefault("time_info", "")
     data.setdefault("needs_visit", False)
     data.setdefault("risk_level", "보통")
-
 
     return data
 
@@ -582,6 +605,19 @@ def decide_handling_from_struct(category: str,
     handling_type = "simple_guide"
     need_call_transfer = False
     need_official_ticket = False
+
+    # 🔒 0단계 안전 가드:
+    #  - 텍스트에 위험 키워드가 있고
+    #  - 현장 방문이 필요(needs_visit=True)라고 판단된 경우
+    #  → 카테고리가 무엇이든 공식 민원 접수(official_ticket)로 올려준다.
+    if is_critical(text) and needs_visit:
+        return {
+            "handling_type": "official_ticket",
+            "need_call_transfer": False,
+            "need_official_ticket": True,
+            "risk_level": risk_level,
+            "needs_visit": needs_visit,
+        }
 
     # 심리지원: 상담/전화 연결 우선
     if category == "심리지원":
@@ -623,7 +659,11 @@ def decide_handling_from_struct(category: str,
 def build_user_facing(category: str,
                       handling: Dict[str, Any],
                       dept: Dict[str, str],
-                      text: str) -> Dict[str, str]:
+                      text: str,
+                      staff_summary: str) -> Dict[str, str]:
+    """
+    주민에게 들려줄 멘트 + 각 화면(TTS)용 스크립트를 한 번에 구성.
+    """
     handling_type = handling["handling_type"]
     need_call_transfer = handling["need_call_transfer"]
     need_official_ticket = handling["need_official_ticket"]
@@ -632,27 +672,45 @@ def build_user_facing(category: str,
 
     short_title = f"{category} 관련 문의" if category != "기타" else "일반 문의"
 
+    # 기본 main_message (결과 페이지 + 전반 안내용)
     main_message = f"{empathy} 지금 말씀해 주신 내용은 '{category}' 민원으로 보입니다."
 
-    extra_pension = ""
+    # 연금/복지 카테고리일 때 핵심 답변(수령 나이 또는 조건 안내)을 따로 분리
+    pension_core = ""
     if category == "연금/복지":
         pm = build_pension_message(text)
         if pm:
-            extra_pension = " " + pm
+            # 출생연도가 포함된 질문: 수령 나이 정보가 핵심
+            pension_core = pm
+        else:
+            # 출생연도 없이 "연금 받을 수 있어?" 같은 포괄 질문인 경우
+            pension_core = (
+                "연금을 실제로 받을 수 있는지는 가입 기간과 납부 이력에 따라 달라집니다. "
+                "현재 상황에 맞는 정확한 안내는 국민연금공단 상담센터에서 확인하셔야 합니다."
+            )
+
 
     next_action_guide = ""
     phone_suggestion = ""
     confirm_question = ""
 
     if handling_type == "simple_guide":
-        next_action_guide = (
-            f"안내해 드린 내용을 참고하셔서 진행하시면 됩니다.{extra_pension}"
-        ).strip()
+        # ⚙ 연금/복지 카테고리는 안내 문구를 별도로 구성
+        if category == "연금/복지":
+            next_action_guide = (
+                "연금 수령 가능 여부와 예상 수령액은 가입 기간과 납부 이력에 따라 다릅니다. "
+                "국민연금공단 고객센터(국번 없이 1355)에 문의하시면 자세한 안내를 받으실 수 있습니다."
+            )
+        else:
+            next_action_guide = " "
+
         if need_call_transfer:
             phone_suggestion = (
                 f"개별 상황에 따라 달라질 수 있어 {dept['department_name']}에 전화로 상담을 받으셔도 좋습니다."
             )
         confirm_question = ""
+
+
 
     elif handling_type == "contact_only":
         next_action_guide = (
@@ -673,12 +731,55 @@ def build_user_facing(category: str,
         )
         confirm_question = "이 내용으로 민원을 접수해 드릴까요?"
 
+    # -------------------- 각 화면(TTS)용 스크립트 구성 --------------------
+
+    # 1) ListeningPage용: 공감 + 대략 분류 안내
+    tts_listening = (
+        f"{empathy} "
+        f"지금 말씀해 주신 내용은 {short_title}로 정리해 보겠습니다."
+    )
+
+    # 2) SummaryPage용: 담당자 요약을 주민에게 다시 읽어주고 확인
+    if staff_summary:
+        tts_summary = (
+            f"방금 접수하신 민원은 {short_title}입니다. "
+            f"요약 내용은 다음과 같습니다. {staff_summary} "
+            "말씀하신 내용이 맞으시면 예 버튼을 눌러 주세요. "
+            "다시 말씀하고 싶으시면 재질문 버튼을 눌러 주셔도 됩니다."
+        )
+    else:
+        tts_summary = (
+            f"방금 접수하신 민원은 {short_title}입니다. "
+            "요약 내용을 불러오는 데 어려움이 있어, 화면에 보이는 내용을 확인해 주세요. "
+            "맞으시면 예 버튼을, 아니면 재질문 버튼을 눌러 주세요."
+        )
+
+    # 3) ResultPage용: 최종 안내 + 다음 행동 + 전화 안내까지 한 번에
+    joined_parts = " ".join(
+        part for part in [main_message, next_action_guide, phone_suggestion] if part
+    ).strip()
+    tts_result = joined_parts or main_message
+
+    # 연금/복지 카테고리일 때만 핵심 답변을 따로 제공
+    if category == "연금/복지":
+        # 출생연도가 있으면 수령 나이 문장, 없으면 "가입 기간/납부 이력에 따라 다름" 안내가 들어감
+        answer_core = pension_core or next_action_guide
+    else:
+        # 다른 카테고리는 지금처럼 answer_core 비워두고,
+        # 프론트에서 next_action_guide → main_message 순으로 사용
+        answer_core = ""
+
     return {
         "short_title": short_title,
         "main_message": main_message,
         "next_action_guide": next_action_guide,
         "phone_suggestion": phone_suggestion,
         "confirm_question": confirm_question,
+        "tts_listening": tts_listening,
+        "tts_summary": tts_summary,
+        "tts_result": tts_result,
+        "answer_core": answer_core,
+
     }
 
 
@@ -751,37 +852,50 @@ def need_clarification(summary_data: Dict[str, Any],
     위치/시간 등 핵심 정보 부족 시, 추가 질문을 할지 여부.
 
     - 도로/시설물인데 location이 완전히 비어 있으면 기본적으로 질문.
-    - 다만, LLM이 location을 못 뽑았더라도
-      텍스트 안에 '추가 위치 정보' + 동/리/골목/아파트/마을회관/집 앞 등
-      위치를 특정할 수 있는 표현이 있으면,
-      '완벽하진 않지만 특정 가능'하다고 보고 질문을 멈춘다.
+    - 다만, 민원 문장 안에 '주소로 볼 수 있는 표현'이 충분히 들어 있으면
+      첫 턴에서도 굳이 다시 묻지 않는다.
+    - 이미 '추가 위치 정보:' 로 한 번 더 받은 뒤에는,
+      그 안에 동/리/길/골목/아파트/마을회관/집앞/대문 같은 표현이 있으면
+      더 이상 clarification 하지 않는다.
     """
+    # 1) 도로/시설물 아닌 카테고리는 추가 질문 안 함
     if category not in ("도로", "시설물"):
         return False
 
     loc = (summary_data.get("location") or "").strip()
-    # LLM이라도 뭔가 위치를 뽑아냈으면 더 이상 안 묻는다.
+    # 2) LLM이 location을 뽑아줬으면 추가 질문 안 함
     if loc:
         return False
 
-    # LLM이 location을 못 뽑았지만, 텍스트 안에 이미 꽤 구체적인 위치 표현이 있으면
+    # 3) 텍스트 수준에서 '주소로 볼 수 있는 표현'이 있는지 검사
     t = text.replace(" ", "")
 
-    # 이미 한 번 이상 "추가 위치 정보:"가 붙은 상황인지 확인
-    has_additional_marker = "추가위치정보" in t
+    # 3-1) 숫자 + 번길/로/대로 패턴 (예: 152번길, 3로, 20대로)
+    has_address_number = bool(
+        re.search(r"[0-9]+번길", t) or
+        re.search(r"(동|리)[0-9]+번?지?", t) or
+        re.search(r"(로|대로)[0-9]+", t)
+    )
 
-    # 동/리/길/골목/아파트/마을회관/집앞/대문 같은 표현이 있는지
-    has_location_like_word = bool(
+    # 3-2) 동/리/길/골목/아파트/마을회관/집앞/대문 같은 '위치 단어' 존재 여부
+    has_location_word = bool(
         re.search(r"(동|리|길|로|대로|골목|아파트|마을회관|집앞|대문)", t)
     )
 
-    # 이미 추가 위치 정보를 한 번 이상 받고,
-    # 그 안에 구체적인 위치 표현이 있으면 → 더 이상 clarification 하지 않음
-    if has_additional_marker and has_location_like_word:
+    # 4) 이미 주소로 충분히 특정 가능한 경우 → 첫 턴이라도 추가 질문 안 함
+    if has_address_number and has_location_word:
         return False
 
-    # 그 외에는 한 번 더 물어본다.
+    # 5) '추가 위치 정보:'가 이미 붙어 있는 두 번째 턴 이후 처리
+    has_additional_marker = "추가위치정보" in t
+
+    # 두 번째 턴 이후이고, 그 안에 위치 단어가 있다면 더 이상 묻지 않음
+    if has_additional_marker and has_location_word:
+        return False
+
+    # 6) 그 외에는 한 번 더 물어본다.
     return True
+
 
 
 
@@ -846,6 +960,9 @@ def run_pipeline_once(user_text: str,
                 "next_action_guide": "",
                 "phone_suggestion": "",
                 "confirm_question": "",
+                "tts_listening": "말씀이 잘 들리지 않았습니다. 다시 한 번 또박또박 말씀해 주시면 고맙겠습니다.",
+                "tts_summary": "요약할 민원 내용이 없어, 먼저 민원을 말씀해 주셔야 합니다.",
+                "tts_result": "민원 내용이 없어 안내해 드릴 수 있는 내용이 없습니다. 처음 화면으로 돌아가 다시 시도해 주세요.",
             },
             "staff_payload": {
                 "summary": "입력된 내용이 없음.",
@@ -860,17 +977,19 @@ def run_pipeline_once(user_text: str,
             },
         }
 
+    # 🔹 '추가 위치 정보:' 마커를 먼저 정리
+    main_text, extra_location = split_additional_location(text)
+    # LLM에 넘길 실제 분석용 텍스트 (마커는 제거)
+    analysis_text = f"{main_text} {extra_location}".strip() if extra_location else main_text
+
     # >>> 0) 시나리오 규칙 오버라이드 먼저 확인 (안전망)
-    scenario_override = detect_scenario_override(text)
+    scenario_override = detect_scenario_override(analysis_text)
 
     # 1) 규칙 기반 1차 분류
-    base_category, needs_visit_rule = rule_first_classify(text)
+    base_category, needs_visit_rule = rule_first_classify(analysis_text)
 
     # 2) LLM으로 카테고리 + 출동 여부 + 위험도 한 번에 확정
-    llm_cf = llm_classify_category_and_fieldwork(text, base_category)
-    category = llm_cf["category"]
-    needs_visit_llm = llm_cf["needs_visit"]
-    risk_level_llm = llm_cf["risk_level"]
+    llm_cf = llm_classify_category_and_fieldwork(analysis_text, base_category)
 
     # >>> 시나리오 규칙이 category / needs_visit / risk_level을 강제로 덮어씌움
     if scenario_override is not None:
@@ -881,27 +1000,32 @@ def run_pipeline_once(user_text: str,
         if "risk_level" in scenario_override:
             risk_level_llm = scenario_override["risk_level"]
 
-    # 규칙/LLM 결과를 합쳐서 최종 needs_visit 결정 (보수적 OR)
     final_needs_visit = needs_visit_rule or needs_visit_llm
 
-    # 3) Summarizer
-    summary_data = summarize_for_staff(text, category)
+    # 3) Summarizer (마커 제거된 텍스트 기준)
+    summary_data = summarize_for_staff(analysis_text, category)
+
+    # 🔹 location이 비어 있고, extra_location이 있으면 주소로 채워준다.
+    if extra_location and not (summary_data.get("location") or "").strip():
+        summary_data["location"] = extra_location
+
 
     # 4) Clarification 필요 여부
-    if need_clarification(summary_data, category, text):
+    if need_clarification(summary_data, category, analysis_text):
         return build_clarification_response(
-            text,
+            analysis_text,
             category,
             needs_visit=final_needs_visit,
             risk_level=risk_level_llm,
         )
+
 
     # 5) handling_type / 접수 방식 결정
     handling = decide_handling_from_struct(
         category=category,
         needs_visit=final_needs_visit,
         risk_level=risk_level_llm,
-        text=text,
+        text=analysis_text,
     )
 
     # >>> 시나리오 규칙이 handling 관련 플래그도 덮어씌움
@@ -917,11 +1041,17 @@ def run_pipeline_once(user_text: str,
     # 6) 부서 정보
     dept = DEPT_MAP.get(category, DEPT_MAP["기타"])
 
-    # 7) 주민용 멘트
-    user_facing = build_user_facing(category, handling, dept, text)
+    # 7) 주민용 멘트 (+ 각 단계 TTS 스크립트)
+    user_facing = build_user_facing(
+        category,
+        handling,
+        dept,
+        analysis_text,
+        summary_data.get("summary_3lines", "")
+    )
 
     # 8) 담당자용 payload
-    staff_payload = build_staff_payload(summary_data, category, handling, text)
+    staff_payload = build_staff_payload(summary_data, category, handling, analysis_text)
 
     stage = "handoff" if handling["need_official_ticket"] else "guide"
 
@@ -941,20 +1071,67 @@ def run_pipeline_once(user_text: str,
 # -------------------- CLI 테스트 --------------------
 if __name__ == "__main__":
     print("민원 텍스트 엔진 — 1단계(텍스트 전용) 데모 (exit로 종료)")
+
     history: List[Dict[str, str]] = []
+    pending_clarification: Optional[Dict[str, Any]] = None  # 🔹 직전 clarification 상태 저장용
+
     while True:
         try:
-            text = input("\n민원 > ").strip()
+            user_input = input("\n민원 > ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n종료합니다.")
             break
 
-        if text.lower() in ("exit", "quit"):
+        if user_input.lower() in ("exit", "quit"):
             print("종료합니다.")
             break
 
-        result = run_pipeline_once(text, history)
+        # 1) 직전 턴이 clarification 이었다면 문장 결합
+        if pending_clarification is not None:
+            prev_text = pending_clarification["text"]
+            prev_engine = pending_clarification["engine_result"]
+            effective_text = f"{prev_text} 추가 위치 정보: {user_input}"
+        else:
+            prev_engine = None
+            effective_text = user_input
 
+        # 2) 엔진 실행 (항상 effective_text 기준으로)
+        result = run_pipeline_once(effective_text, history)
+
+        # 3) 🔒 카테고리 보정:
+        #    - 직전 턴이 clarification 이고
+        #    - 그때는 도로/시설물/연금/심리지원/생활민원 등 명확했는데
+        #    - 이번 턴이 '기타'로 떨어지면, 직전 카테고리/처리방식을 유지
+        if prev_engine is not None:
+            prev_cat = prev_engine.get("minwon_type")
+            new_cat = result.get("minwon_type")
+            if new_cat == "기타" and prev_cat and prev_cat != "기타":
+                print(f"[디버그] clarification 이후 '기타'로 내려가서, 이전 카테고리 {prev_cat} 로 보정합니다.")
+                result["minwon_type"] = prev_cat
+
+                # handling_type / 플래그도 맞춰 줌
+                for key in ("handling_type", "need_call_transfer", "need_official_ticket"):
+                    if key in prev_engine:
+                        result[key] = prev_engine[key]
+
+                # staff_payload.category 도 통일
+                sp = result.get("staff_payload") or {}
+                sp["category"] = prev_cat
+                result["staff_payload"] = sp
+
+        # 4) history 에도 effective_text 기준으로 넣기
+        history.append({"role": "user", "content": effective_text})
+
+        # 5) 다음 턴을 위한 clarification 상태 갱신
+        if result.get("stage") == "clarification":
+            pending_clarification = {
+                "text": effective_text,
+                "engine_result": result,
+            }
+        else:
+            pending_clarification = None
+
+        # 6) 기존 출력 그대로
         uf = result["user_facing"]
         sp = result["staff_payload"]
         print("\n[단계]", result["stage"])
@@ -977,4 +1154,3 @@ if __name__ == "__main__":
             print(" - 메모:", sp["memo_for_staff"])
 
         print("FE:" + json.dumps(result, ensure_ascii=False))
-        history.append({"role": "user", "content": text})

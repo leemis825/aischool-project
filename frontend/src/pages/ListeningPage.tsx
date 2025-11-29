@@ -15,6 +15,9 @@ export default function ListeningPage() {
   const [sttResult, setSttResult] = useState<string>("");
   const [ttsUrl, setTtsUrl] = useState<string | null>(null); // 🔹 TTS 오디오 URL
   const [volume, setVolume] = useState(0);
+  const [sessionId, setSessionId] = useState<string | null>(null); // 🔹 백엔드 세션 ID
+  const sessionIdRef = useRef<string | null>(null);
+
   // 🔹 녹음 관련 ref들
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -25,103 +28,6 @@ export default function ListeningPage() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  useEffect(() => {
-    const setupRecorderAndVisualizer = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
-        mediaStreamRef.current = stream;
-
-        /**
-         * 1) MediaRecorder 설정 (녹음용)
-         */
-        const options: MediaRecorderOptions = {};
-        if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
-          options.mimeType = "audio/webm;codecs=opus";
-        } else if (MediaRecorder.isTypeSupported("audio/webm")) {
-          options.mimeType = "audio/webm";
-        }
-
-        const recorder = new MediaRecorder(stream, options);
-
-        recorder.ondataavailable = (event: BlobEvent) => {
-          if (event.data && event.data.size > 0) {
-            chunksRef.current.push(event.data);
-          }
-        };
-
-        recorder.onstop = async () => {
-          try {
-            const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-            chunksRef.current = [];
-
-            await uploadBlob(blob);
-          } catch (err) {
-            console.error(err);
-            setError("녹음 처리 중 오류가 발생했어요. 다시 시도해 주세요.");
-            setIsUploading(false);
-          }
-        };
-
-        mediaRecorderRef.current = recorder;
-
-        /**
-         * 2) AudioContext + Analyser 설정 (파형 그리기용)
-         */
-        const audioCtx = new (window.AudioContext ||
-          (window as any).webkitAudioContext)();
-        audioContextRef.current = audioCtx;
-
-        const source = audioCtx.createMediaStreamSource(stream);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 2048; // 해상도
-        source.connect(analyser);
-        analyserRef.current = analyser;
-
-        if (analyserRef.current) {
-          trackVolume();
-        }
-
-        // 자동 녹음 시작
-        recorder.start();
-        setIsRecording(true);
-      } catch (e) {
-        console.error(e);
-        setError("마이크 권한을 허용해 주세요.");
-      }
-    };
-
-    setupRecorderAndVisualizer();
-
-    // 언마운트 시 정리
-    return () => {
-      try {
-        if (
-          mediaRecorderRef.current &&
-          mediaRecorderRef.current.state !== "inactive"
-        ) {
-          mediaRecorderRef.current.stop();
-        }
-      } catch {
-        // ignore
-      }
-
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      }
-
-      if (animationFrameRef.current !== null) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const trackVolume = () => {
     const analyser = analyserRef.current;
@@ -148,6 +54,7 @@ export default function ListeningPage() {
 
     update();
   };
+
   const stopVisualizer = () => {
     // 애니메이션 루프 중지
     if (animationFrameRef.current !== null) {
@@ -167,6 +74,109 @@ export default function ListeningPage() {
     ctx.fillStyle = "#4E9948";
     ctx.fillRect(0, 0, width, height);
   };
+
+  // 🔹 녹음 + 비주얼라이저 세팅을 함수로 분리 (초기 + clarification 이후 재사용)
+  const setupRecorderAndVisualizer = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+      mediaStreamRef.current = stream;
+
+      /**
+       * 1) MediaRecorder 설정 (녹음용)
+       */
+      const options: MediaRecorderOptions = {};
+      if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+        options.mimeType = "audio/webm;codecs=opus";
+      } else if (MediaRecorder.isTypeSupported("audio/webm")) {
+        options.mimeType = "audio/webm";
+      }
+
+      const recorder = new MediaRecorder(stream, options);
+
+      recorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data && event.data.size > 0) {
+          chunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        try {
+          const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+          chunksRef.current = [];
+
+          await uploadBlob(blob);
+        } catch (err) {
+          console.error(err);
+          setError("녹음 처리 중 오류가 발생했어요. 다시 시도해 주세요.");
+          setIsUploading(false);
+        }
+      };
+
+      mediaRecorderRef.current = recorder;
+
+      /**
+       * 2) AudioContext + Analyser 설정 (파형 그리기용)
+       */
+      const audioCtx = new (window.AudioContext ||
+        (window as any).webkitAudioContext)();
+      audioContextRef.current = audioCtx;
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048; // 해상도
+      source.connect(analyser);
+      analyserRef.current = analyser;
+
+      if (analyserRef.current) {
+        trackVolume();
+      }
+
+      // 자동 녹음 시작
+      recorder.start();
+      setIsRecording(true);
+      setIsUploading(false);
+      setError(null);
+    } catch (e) {
+      console.error(e);
+      setError("마이크 권한을 허용해 주세요.");
+    }
+  };
+
+  useEffect(() => {
+    // 첫 진입 시 한 번만 녹음 시작
+    setupRecorderAndVisualizer();
+
+    // 언마운트 시 정리
+    return () => {
+      try {
+        if (
+          mediaRecorderRef.current &&
+          mediaRecorderRef.current.state !== "inactive"
+        ) {
+          mediaRecorderRef.current.stop();
+        }
+      } catch {
+        // ignore
+      }
+
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
+
+      stopVisualizer();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 언니 여기예요2🦊🐰
   const callTTS = async (text: string) => {
@@ -193,23 +203,57 @@ export default function ListeningPage() {
 
     try {
       console.log("🎤전송할 오디오 Blob:", blob);
+      console.log(
+        "👉 uploadBlob 직전 sessionIdRef.current =",
+        sessionIdRef.current
+      );
+
       const file = new File([blob], "voice.webm", { type: "audio/webm" });
 
-      // 🔥 이제 여기서 객체가 돌아옴
-      const result: SttMinwonResponse = await sttAndMinwon(file);
+      // 🔥 이미 세션 ID가 있으면 그걸 계속 사용
+      const result: SttMinwonResponse = await sttAndMinwon(
+        file,
+        sessionIdRef.current
+      );
       console.log("🔊 STT+민원 엔진 결과:", result);
 
       const finalText = result.text || "(빈 텍스트)";
       setSttResult(finalText);
       setIsUploading(false);
 
-      // TTS는 주민 안내 멘트로 하는 것도 좋음
+      // ✅ 세션 ID는 "처음 한 번만" 세팅
+      if (!sessionIdRef.current && result.session_id) {
+        sessionIdRef.current = result.session_id;
+        setSessionId(result.session_id);
+        console.log("✅ 세션 ID 최초 설정:", result.session_id);
+      } else if (
+        sessionIdRef.current &&
+        result.session_id &&
+        result.session_id !== sessionIdRef.current
+      ) {
+        console.warn(
+          "⚠️ 서버가 다른 session_id를 돌려줬어요. 기존 것을 유지합니다.",
+          {
+            current: sessionIdRef.current,
+            returned: result.session_id,
+          }
+        );
+        // 여기서는 그냥 무시하고 기존 sessionIdRef.current를 계속 사용
+      }
+
       await callTTS(
         result.user_facing?.main_message ??
-          "민원을 인식하고 있습니다. 잠시만 기다려 주세요."
+          "말씀해 주셔서 감사합니다. 잠시만 기다려 주세요."
       );
 
-      // ✅ 요약(summary)을 Summary 페이지로 넘기기
+      const stage = result.engine_result?.stage;
+
+      if (stage === "clarification") {
+        console.log("🔁 clarification 단계 – 다시 녹음 대기");
+        await setupRecorderAndVisualizer();
+        return;
+      }
+
       navigate("/summary", {
         state: {
           sttText: finalText,
@@ -277,8 +321,6 @@ export default function ListeningPage() {
                 ? `scale(${1 + Math.sin(volume * 10) * 0.2})` // 🔊 녹음 중에만 꿈틀
                 : "scale(1)", // 🔇 아니면 고정
           }}
-          // volume=0 → scale(1)
-          // volume=1 → scale(1.6) 정도
         />
 
         {error && <p style={{ color: "red" }}>{error}</p>}

@@ -6,7 +6,10 @@ export default function SummaryPage() {
   const location = useLocation();
 
   // ListeningPage → navigate("/summary", { state: { summary: ... } })
-  const { summary } = location.state || {};
+  const { summary, engineResult } = (location.state || {}) as {
+    summary?: string;
+    engineResult?: any;
+  };
 
   const goToReListen = () => {
     navigate("/relisten");
@@ -16,6 +19,7 @@ export default function SummaryPage() {
     navigate("/result", {
       state: {
         summary,
+        engineResult,
       },
     });
   };
