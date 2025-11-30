@@ -20,15 +20,19 @@ export interface HeaderStatus {
   date_display: string;
   weather: WeatherInfo | null;
   lunar: LunarInfo;
+  holiday: string;
 }
 
 export async function getHeaderStatus(
-  location: string = "Gwangju"
+  location: string = "Gwangju",
+  test_date?: string
 ): Promise<HeaderStatus> {
-  const url = `${API_BASE_URL}/api/status/header?location=${encodeURIComponent(
+  let url = `${API_BASE_URL}/api/status/header?location=${encodeURIComponent(
     location
   )}`;
-
+  if (test_date) {
+    url += `&test_date=${encodeURIComponent(test_date)}`;
+  }
   console.log("📡 calling headerStatus:", url);
 
   const res = await fetch(url);
