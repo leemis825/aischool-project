@@ -46,9 +46,7 @@ export async function sttAndMinwon(
 ): Promise<SttMinwonResponse> {
   // 🔹 session_id를 쿼리스트링으로도 같이 보낼 준비 (선택)
   const baseUrl = `${API_BASE_URL}/stt`;
-  // 🔹 디버그용: /stt 대신 /debug/stt-session 으로 잠깐 호출
-  //const baseUrl = `${API_BASE_URL}/debug/stt-session`;
-
+  
   const url =
     sessionID && sessionID.trim().length > 0
       ? `${baseUrl}?session_id=${encodeURIComponent(sessionID)}`

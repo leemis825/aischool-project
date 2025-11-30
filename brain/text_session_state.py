@@ -1,33 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-text_session_state.py
+brain.text_session_state
 
-텍스트 기반 멀티턴 민원에서
-- Clarification(추가 위치 질문) 처리
-- 민원 이슈(A, B, C...) 단위 관리
-- 이번 발화가 기존 이슈의 후속인지/새 이슈인지 라우팅
+텍스트 기반 멀티턴 대화에서
+"세션 상태"와 "이슈 A/B/C 스레드"를 관리하는 모듈입니다.
 
-을 담당하는 상태 관리 모듈입니다.
+주요 역할:
+- 한 세션(session_id) 안에서
+  - 사용자 원문(user_raw)
+  - 엔진에 실제로 들어간 텍스트(effective_text)
+  - 엔진 결과(engine_result)
+  들이 시간 순서대로 쌓이도록 관리.
 
-🎯 주요 역할
---------------------------------------
-1) build_effective_text(user_raw)
-   - 바로 이전 턴이 stage == "clarification" 이면
-     → 이전 문장 + "추가 위치 정보: ..." 형태로 붙여서 반환
+- build_effective_text(user_raw):
+  직전 턴이 clarification(추가 질문)이었는지 등을 확인해서
+  '추가 위치 정보: ...' 형식으로 문장을 합쳐주는 기능.
 
-2) register_turn(user_raw, effective_text, engine_result)
-   - 민원 엔진 결과를 바탕으로
-     - 어떤 이슈(A/B/...)에 속하는지 결정
-       · active_issue_id가 있으면 → 그대로 사용
-       · 없으면 → brain.turn_router.choose_issue_for_followup 사용
-       · 아무 이슈에도 안 맞으면 → 새 이슈 생성
-     - clarification 이면 이슈는 open 유지, 다음 턴을 위해 pending_text 저장
-     - guide/handoff 등이면 이슈 closed, active_issue_id 초기화
+- register_turn(...):
+  새 턴을 어떤 이슈(A/B/C)로 묶을지 결정하고,
+  turn_router와 함께 "민원 묶음 단위"를 만들어 준다.
 
-3) debug_issues()
-   - 현재 이슈/턴 상태를 JSON 직렬화 가능한 dict로 반환
-   - main.py에서 디버깅 출력용으로 사용
+FastAPI의 /stt 엔드포인트에서 session_id와 함께 사용됩니다.
 """
+
 
 from __future__ import annotations
 

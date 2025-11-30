@@ -13,10 +13,13 @@ export default function ListeningPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sttResult, setSttResult] = useState<string>("");
-  const [ttsUrl, setTtsUrl] = useState<string | null>(null); // 🔹 TTS 오디오 URL
+  const [ttsUrl, setTtsUrl] = useState<string | null>(null); // 🔹 사용자 안내 TTS URL
   const [volume, setVolume] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null); // 🔹 백엔드 세션 ID
   const sessionIdRef = useRef<string | null>(null);
+
+  // 🔹 StrictMode에서 useEffect 두 번 실행되는 것 방지용
+  const hasInitRef = useRef(false);
 
   // 🔹 녹음 관련 ref들
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -27,8 +30,9 @@ export default function ListeningPage() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null); // 현재는 안 쓰지만 남겨둠(확장용)
 
+  // 🔊 볼륨 계산 → 이미지 튕김용
   const trackVolume = () => {
     const analyser = analyserRef.current;
     if (!analyser) return;
@@ -62,7 +66,7 @@ export default function ListeningPage() {
       animationFrameRef.current = null;
     }
 
-    // 캔버스 깨끗하게 지우고 배경만 채우기
+    // 캔버스 깨끗하게 지우고 배경만 채우기 (현재 UI에는 안 보여도 방어용)
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -75,7 +79,7 @@ export default function ListeningPage() {
     ctx.fillRect(0, 0, width, height);
   };
 
-  // 🔹 녹음 + 비주얼라이저 세팅을 함수로 분리 (초기 + clarification 이후 재사용)
+  // 🔹 녹음 + 볼륨 추적 세팅
   const setupRecorderAndVisualizer = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -117,7 +121,7 @@ export default function ListeningPage() {
       mediaRecorderRef.current = recorder;
 
       /**
-       * 2) AudioContext + Analyser 설정 (파형 그리기용)
+       * 2) AudioContext + Analyser 설정 (볼륨 측정용)
        */
       const audioCtx = new (window.AudioContext ||
         (window as any).webkitAudioContext)();
@@ -133,7 +137,7 @@ export default function ListeningPage() {
         trackVolume();
       }
 
-      // 자동 녹음 시작
+      // 🔴 여기서부터 실제 녹음 시작
       recorder.start();
       setIsRecording(true);
       setIsUploading(false);
@@ -144,9 +148,40 @@ export default function ListeningPage() {
     }
   };
 
+  // 🔊 페이지 진입 시: 안내 멘트 → 끝나면 녹음 시작
   useEffect(() => {
-    // 첫 진입 시 한 번만 녹음 시작
-    setupRecorderAndVisualizer();
+    if (hasInitRef.current) return;
+    hasInitRef.current = true;
+
+    const speakAndStart = async () => {
+      try {
+        const text =
+          "말씀을 듣고 있어요. 말씀이 끝나면 화면 어디든 눌러 주세요.";
+        console.log("[ListeningPage] 안내 TTS:", text);
+        const blob = await requestTts(text);
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          setupRecorderAndVisualizer();
+        };
+
+        audio.onerror = () => {
+          URL.revokeObjectURL(url);
+          // 재생 실패해도 바로 녹음 시작
+          setupRecorderAndVisualizer();
+        };
+
+        audio.play();
+      } catch (e) {
+        console.error("ListeningPage 안내 음성 오류:", e);
+        // TTS 호출 자체가 실패해도 녹음은 시작
+        setupRecorderAndVisualizer();
+      }
+    };
+
+    speakAndStart();
 
     // 언마운트 시 정리
     return () => {
@@ -179,6 +214,7 @@ export default function ListeningPage() {
   }, []);
 
   // 언니 여기예요2🦊🐰
+  // STT 결과에 대한 안내 멘트(TTS) 재생용
   const callTTS = async (text: string) => {
     try {
       const trimmed = text?.trim();
@@ -189,7 +225,7 @@ export default function ListeningPage() {
         URL.revokeObjectURL(ttsUrl);
       }
 
-      const blob = await requestTts(trimmed); // ← 서비스 함수 호출
+      const blob = await requestTts(trimmed);
       const url = URL.createObjectURL(blob);
       setTtsUrl(url);
     } catch (e) {
@@ -282,7 +318,7 @@ export default function ListeningPage() {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
 
-      // 🔥 여기서 파형 끄기
+      // 🔥 여기서 볼륨 애니메이션 끄기
       stopVisualizer();
     } catch (e) {
       console.error(e);

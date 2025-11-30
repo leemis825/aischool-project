@@ -164,8 +164,8 @@ export default function ClockPage() {
   } else if (!headerStatus?.weather) {
     weatherText = "날씨 정보 없음";
   } else {
-    const { temp, feels_like, condition } = headerStatus.weather;
-    weatherText = `${condition} ${temp}℃ / ${feels_like}℃`;
+    const { temp, max_temp, min_temp, condition } = headerStatus.weather;
+    weatherText = `${condition} ${temp}℃ (최고:${max_temp} / 최저:${min_temp})`;
   }
 
   return (

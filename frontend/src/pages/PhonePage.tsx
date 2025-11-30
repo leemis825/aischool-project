@@ -1,11 +1,39 @@
 import { useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Layout from "../components/Layout.js";
 import BackIcon from "../assets/back.png";
+import { requestTts } from "../services/ttsService";
 
 export default function PhonePage() {
   const navigate = useNavigate();
   const [digits, setDigits] = useState("");
+
+  // 🔊 안내 멘트 한 번만 읽게 하는 플래그
+  const spokenRef = useRef(false);
+
+  useEffect(() => {
+    if (spokenRef.current) return;
+    spokenRef.current = true;
+
+    const speak = async () => {
+      try {
+        const text =
+          "연락 받으실 번호를 입력해 주세요. 숫자를 누르신 뒤에 확인 버튼을 눌러 주세요.";
+        const blob = await requestTts(text);
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+
+        audio.onended = () => URL.revokeObjectURL(url);
+        audio.onerror = () => URL.revokeObjectURL(url);
+
+        audio.play();
+      } catch (e) {
+        console.error("PhonePage TTS 오류:", e);
+      }
+    };
+
+    speak();
+  }, []);
 
   const handleNumberClick = (n: string) => {
     setDigits((prev) => {

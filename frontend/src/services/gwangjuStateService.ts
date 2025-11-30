@@ -2,6 +2,8 @@ import { API_BASE_URL } from "./apiConfig";
 
 export interface WeatherInfo {
   temp: number;
+  max_temp: number;
+  min_temp: number;
   feels_like: number;
   condition: string;
   location: string;
