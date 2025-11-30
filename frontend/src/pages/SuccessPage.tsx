@@ -15,7 +15,7 @@ export default function SuccessPage() {
       title="접수완료"
       image="src/assets/img2.png"
       topImage="src/assets/top2.png"
-      content={`[무슨무슨기관] 으로\n민원이\n접수되었습니다.`}
+      content={`안내해 드린 내용을 참고하셔서 진행하시면 됩니다. 1999년생의 경우 노령연금은 만 65세, 조기노령연금은 만 60세부터 가능합니다`}
       content3="확인 후 화면 어디든 눌러주세요."
     ></BubbleLayout>
   );

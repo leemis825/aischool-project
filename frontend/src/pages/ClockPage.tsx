@@ -119,7 +119,7 @@ export default function ClockPage() {
     const fetchStatus = async () => {
       try {
         setError(null);
-        const data = await getHeaderStatus("Gwangju");
+        const data = await getHeaderStatus("Gwangju", "2025-12-25");
         setHeaderStatus(data);
       } catch (e) {
         console.error(e);
@@ -140,14 +140,15 @@ export default function ClockPage() {
   const isLoaded = !!headerStatus;
 
   // ✅ 날짜
-  const dateDisplay = formatDate(now);
+  // ✅ 날짜 (API에서 넘어온 date_display가 있으면 그걸 사용)
+  const dateDisplay = headerStatus?.date_display ?? formatDate(now);
 
   // ✅ 절기 / 음력 (빈 문자열이면 '정보 없음'으로)
   const solarTerm =
     headerStatus && headerStatus.lunar.seasonal_term
       ? headerStatus.lunar.seasonal_term
       : isLoaded
-      ? "절기 정보 없음"
+      ? ""
       : "절기 정보를 불러오는 중...";
 
   const lunarText =
@@ -157,12 +158,20 @@ export default function ClockPage() {
       ? "음력 정보 없음"
       : "음력 정보를 불러오는 중...";
 
-  // ✅ 날씨 텍스트
+  const HOLIDAY_MAP: Record<string, string> = {
+    기독탄신일: "크리스마스",
+    석가탄신일: "부처님오신날",
+    // 원하는 만큼 추가 가능
+  };
+
+  const holidayRaw = headerStatus?.holiday;
+
+  const holidayText = holidayRaw ? HOLIDAY_MAP[holidayRaw] ?? holidayRaw : null; // ✅ 날씨 텍스트
   let weatherText: string;
   if (!isLoaded) {
     weatherText = "날씨 정보를 불러오는 중...";
   } else if (!headerStatus?.weather) {
-    weatherText = "날씨 정보 없음";
+    weatherText = "";
   } else {
     const { temp, feels_like, condition } = headerStatus.weather;
     weatherText = `${condition} ${temp}℃ / ${feels_like}℃`;
@@ -181,7 +190,7 @@ export default function ClockPage() {
       <div style={whiteCardStyle}>
         <div style={topRowStyle}>
           <span>
-            {solarTerm} · {weatherText}
+            {holidayText} {solarTerm} {weatherText}
           </span>
         </div>
 
