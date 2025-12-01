@@ -58,21 +58,26 @@ jobs:
       #    - 프론트엔드 컨테이너 교체 + 헬스체크 + 실패 시 롤백
       - name: Deploy to NCP Server (backend & frontend)
         run: |
-          ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << EOF
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << 'EOF'
             set -e
 
-            REGISTRY_URL="${REGISTRY_URL}"
-            IMAGE_NAME_BACKEND="${IMAGE_NAME_BACKEND}"
-            IMAGE_NAME_FRONTEND="${IMAGE_NAME_FRONTEND}"
+            # GitHub Secrets 값을 원격 서버 변수에 직접 대입
+            REGISTRY_URL="${{ secrets.REGISTRY_URL }}"
+            IMAGE_NAME_BACKEND="${{ secrets.IMAGE_NAME_BACKEND }}"
+            IMAGE_NAME_FRONTEND="${{ secrets.IMAGE_NAME_FRONTEND }}"
+
+            # 공용 네트워크 보장 (이미 있으면 에러 무시)
+            docker network create minwon-net 2>/dev/null || true
 
             ##############
             # 1) 백엔드 배포
             ##############
             echo "==> [BACKEND] 현재 컨테이너 이미지 백업"
-            OLD_BACK_IMAGE_ID=\$(docker inspect --format='{{.Image}}' mk 2>/dev/null || true)
+            OLD_BACK_IMAGE_ID=$(docker inspect --format='{{.Image}}' mk 2>/dev/null || true)
 
             echo "==> [BACKEND] 최신 이미지 pull"
-            docker pull \${REGISTRY_URL}/\${IMAGE_NAME_BACKEND}:latest
+            echo "PULL TARGET (BACKEND): ${REGISTRY_URL}/${IMAGE_NAME_BACKEND}:latest"
+            docker pull ${REGISTRY_URL}/${IMAGE_NAME_BACKEND}:latest
 
             echo "==> [BACKEND] 기존 컨테이너 mk 중지/삭제"
             docker stop mk 2>/dev/null || true
@@ -81,24 +86,25 @@ jobs:
             echo "==> [BACKEND] 새 컨테이너 mk 실행"
             docker run -d \
               --name mk \
+              --network minwon-net \
               -p 8000:8000 \
               --restart unless-stopped \
               --env-file /home/ubuntu/minwon-kiosk/.env \
-              \${REGISTRY_URL}/\${IMAGE_NAME_BACKEND}:latest
+              ${REGISTRY_URL}/${IMAGE_NAME_BACKEND}:latest
 
             echo "==> [BACKEND] 헬스체크 시작 (최대 10번, 5초 간격)"
             backend_ok=false
-            for i in \$(seq 1 10); do
+            for i in $(seq 1 10); do
               sleep 5
               if curl -fs http://127.0.0.1:8000/ >/dev/null 2>&1; then
-                echo "[BACKEND] 헬스체크 통과 (시도 \$i 회차)"
+                echo "[BACKEND] 헬스체크 통과 (시도 $i 회차)"
                 backend_ok=true
                 break
               fi
-              echo "[BACKEND] 헬스체크 재시도... (\$i/10)"
+              echo "[BACKEND] 헬스체크 재시도... ($i/10)"
             done
 
-            if [ "\$backend_ok" = false ]; then
+            if [ "$backend_ok" = false ]; then
               echo "[BACKEND] 헬스체크 실패, 롤백 진행"
 
               echo "==> [BACKEND] 새 컨테이너 로그 (최근 50줄)"
@@ -108,14 +114,15 @@ jobs:
               docker stop mk 2>/dev/null || true
               docker rm mk 2>/dev/null || true
 
-              if [ -n "\$OLD_BACK_IMAGE_ID" ]; then
+              if [ -n "$OLD_BACK_IMAGE_ID" ]; then
                 echo "==> [BACKEND] 이전 이미지로 컨테이너 복구"
                 docker run -d \
                   --name mk \
+                  --network minwon-net \
                   -p 8000:8000 \
                   --restart unless-stopped \
                   --env-file /home/ubuntu/minwon-kiosk/.env \
-                  \$OLD_BACK_IMAGE_ID
+                  $OLD_BACK_IMAGE_ID
               else
                 echo "[BACKEND] 이전 이미지 정보가 없어 롤백할 수 없습니다."
               fi
@@ -129,10 +136,11 @@ jobs:
             # 2) 프론트엔드 배포
             ##############
             echo "==> [FRONT] 현재 컨테이너 이미지 백업"
-            OLD_FRONT_IMAGE_ID=\$(docker inspect --format='{{.Image}}' mk-front 2>/dev/null || true)
+            OLD_FRONT_IMAGE_ID=$(docker inspect --format='{{.Image}}' mk-front 2>/dev/null || true)
 
             echo "==> [FRONT] 최신 이미지 pull"
-            docker pull \${REGISTRY_URL}/\${IMAGE_NAME_FRONTEND}:latest
+            echo "PULL TARGET (FRONT): ${REGISTRY_URL}/${IMAGE_NAME_FRONTEND}:latest"
+            docker pull ${REGISTRY_URL}/${IMAGE_NAME_FRONTEND}:latest
 
             echo "==> [FRONT] 기존 컨테이너 mk-front 중지/삭제"
             docker stop mk-front 2>/dev/null || true
@@ -141,23 +149,24 @@ jobs:
             echo "==> [FRONT] 새 컨테이너 mk-front 실행"
             docker run -d \
               --name mk-front \
+              --network minwon-net \
               -p 80:80 \
               --restart unless-stopped \
-              \${REGISTRY_URL}/\${IMAGE_NAME_FRONTEND}:latest
+              ${REGISTRY_URL}/${IMAGE_NAME_FRONTEND}:latest
 
             echo "==> [FRONT] 헬스체크 시작 (최대 10번, 5초 간격)"
             front_ok=false
-            for i in \$(seq 1 10); do
+            for i in $(seq 1 10); do
               sleep 5
               if curl -fs http://127.0.0.1/ >/dev/null 2>&1; then
-                echo "[FRONT] 헬스체크 통과 (시도 \$i 회차)"
+                echo "[FRONT] 헬스체크 통과 (시도 $i 회차)"
                 front_ok=true
                 break
               fi
-              echo "[FRONT] 헬스체크 재시도... (\$i/10)"
+              echo "[FRONT] 헬스체크 재시도... ($i/10)"
             done
 
-            if [ "\$front_ok" = false ]; then
+            if [ "$front_ok" = false ]; then
               echo "[FRONT] 헬스체크 실패, 롤백 진행"
 
               echo "==> [FRONT] 새 컨테이너 로그 (최근 50줄)"
@@ -167,13 +176,14 @@ jobs:
               docker stop mk-front 2>/dev/null || true
               docker rm mk-front 2>/dev/null || true
 
-              if [ -n "\$OLD_FRONT_IMAGE_ID" ]; then
+              if [ -n "$OLD_FRONT_IMAGE_ID" ]; then
                 echo "==> [FRONT] 이전 이미지로 컨테이너 복구"
                 docker run -d \
                   --name mk-front \
+                  --network minwon-net \
                   -p 80:80 \
                   --restart unless-stopped \
-                  \$OLD_FRONT_IMAGE_ID
+                  $OLD_FRONT_IMAGE_ID
               else
                 echo "[FRONT] 이전 이미지 정보가 없어 롤백할 수 없습니다."
               fi
@@ -187,7 +197,3 @@ jobs:
             echo "==> 오래된 Docker 리소스 자동 정리 (최근 7일 이전 것 삭제)"
             docker system prune -af --filter "until=168h" || true
           EOF
-        env:
-          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
-          IMAGE_NAME_BACKEND: ${{ secrets.IMAGE_NAME_BACKEND }}
-          IMAGE_NAME_FRONTEND: ${{ secrets.IMAGE_NAME_FRONTEND }}
