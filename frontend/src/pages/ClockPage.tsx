@@ -1,3 +1,5 @@
+// frontend/src/pages/ClockPage.tsx
+
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
@@ -74,7 +76,7 @@ const whiteCardStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   alignItems: "center",
-  paddingTop: "160px", // content와 topWhite 사이 공간
+  paddingTop: "160px",
   overflow: "hidden",
   borderBlockEnd: "8px solid #668b5a",
   borderRight: "8px solid #668b5a",
@@ -103,6 +105,7 @@ function formatTime(date: Date) {
   const mm = String(date.getMinutes()).padStart(2, "0");
   return `${hh} : ${mm}`;
 }
+
 export default function ClockPage() {
   const [now, setNow] = useState(new Date());
   const [headerStatus, setHeaderStatus] = useState<HeaderStatus | null>(null);
@@ -119,7 +122,8 @@ export default function ClockPage() {
     const fetchStatus = async () => {
       try {
         setError(null);
-        const data = await getHeaderStatus("Gwangju", "2025-12-25");
+        // ✅ 기본은 오늘 날짜, 필요하면 test_date 넣어서 호출 가능
+        const data = await getHeaderStatus("Gwangju");
         setHeaderStatus(data);
       } catch (e) {
         console.error(e);
@@ -136,45 +140,40 @@ export default function ClockPage() {
     navigate("/complaint");
   };
 
-  // ✅ 응답 도착 여부
   const isLoaded = !!headerStatus;
 
-  // ✅ 날짜
-  // ✅ 날짜 (API에서 넘어온 date_display가 있으면 그걸 사용)
+  // ✅ 날짜: 백엔드가 내려준 date_display 우선
   const dateDisplay = headerStatus?.date_display ?? formatDate(now);
 
-  // ✅ 절기 / 음력 (빈 문자열이면 '정보 없음'으로)
-  const solarTerm =
-    headerStatus && headerStatus.lunar.seasonal_term
-      ? headerStatus.lunar.seasonal_term
-      : isLoaded
-      ? ""
-      : "절기 정보를 불러오는 중...";
+  // ✅ 절기
+  const solarTerm = !isLoaded
+    ? "절기 정보를 불러오는 중..."
+    : headerStatus?.lunar?.seasonal_term || "";
 
-  const lunarText =
-    headerStatus && headerStatus.lunar.lunar_date
-      ? headerStatus.lunar.lunar_date
-      : isLoaded
-      ? "음력 정보 없음"
-      : "음력 정보를 불러오는 중...";
+  // ✅ 음력
+  const lunarText = !isLoaded
+    ? "음력 정보를 불러오는 중..."
+    : headerStatus?.lunar?.lunar_date || "음력 정보 없음";
 
   const HOLIDAY_MAP: Record<string, string> = {
     기독탄신일: "크리스마스",
     석가탄신일: "부처님오신날",
-    // 원하는 만큼 추가 가능
   };
 
   const holidayRaw = headerStatus?.holiday;
+  const holidayText = holidayRaw
+    ? HOLIDAY_MAP[holidayRaw] ?? holidayRaw
+    : "";
 
-  const holidayText = holidayRaw ? HOLIDAY_MAP[holidayRaw] ?? holidayRaw : null; // ✅ 날씨 텍스트
+  // ✅ 날씨 텍스트
   let weatherText: string;
   if (!isLoaded) {
     weatherText = "날씨 정보를 불러오는 중...";
   } else if (!headerStatus?.weather) {
-    weatherText = "";
+    weatherText = "날씨 정보 없음";
   } else {
-    const { temp, feels_like, condition } = headerStatus.weather;
-    weatherText = `${condition} ${temp}℃ / ${feels_like}℃`;
+    const { temp, max_temp, min_temp, condition } = headerStatus.weather;
+    weatherText = `${condition} ${temp}℃ (최고:${max_temp} / 최저:${min_temp})`;
   }
 
   return (

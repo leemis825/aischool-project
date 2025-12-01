@@ -1,11 +1,45 @@
 import { useNavigate } from "react-router-dom";
+import { useEffect, useRef } from "react";
 import Layout from "../components/Layout.js";
+import { requestTts } from "../services/ttsService";
 
 export default function ComplaintPage() {
   const navigate = useNavigate();
+
+  // 🔒 StrictMode에서 useEffect 두 번 실행되는 것 방지용
+  const didPlayRef = useRef(false);
+
+  useEffect(() => {
+    if (didPlayRef.current) return;   // 이미 한 번 실행했으면 그냥 종료
+    didPlayRef.current = true;
+
+    const speakIntro = async () => {
+      try {
+        const text =
+          "안녕하세요. 화면을 누르고 민원을 말씀해 주세요.";
+        console.log("🎧 calling TTS intro:", text);
+
+        const blob = await requestTts(text);
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+        };
+
+        audio.play();
+      } catch (e) {
+        console.error("초기 안내 음성 재생 중 오류:", e);
+      }
+    };
+
+    speakIntro();
+  }, []);
+
   const handleClick = () => {
     navigate("/listen");
   };
+
   return (
     <Layout
       onClick={handleClick}
