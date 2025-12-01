@@ -61,11 +61,12 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/minwon.pem root@${{ secrets.SERVER_IP }} << 'EOF'
             set -e
 
-            REGISTRY_URL="${{REGISTRY_URL}}"
-            IMAGE_NAME_BACKEND="${{IMAGE_NAME_BACKEND}}"
-            IMAGE_NAME_FRONTEND="${{IMAGE_NAME_FRONTEND}}"
+            # GitHub Secrets 값을 원격 서버 변수에 직접 대입
+            REGISTRY_URL="${{ secrets.REGISTRY_URL }}"
+            IMAGE_NAME_BACKEND="${{ secrets.IMAGE_NAME_BACKEND }}"
+            IMAGE_NAME_FRONTEND="${{ secrets.IMAGE_NAME_FRONTEND }}"
 
-            # (선택) 공용 네트워크 보장
+            # 공용 네트워크 보장 (이미 있으면 에러 무시)
             docker network create minwon-net 2>/dev/null || true
 
             ##############
@@ -75,6 +76,7 @@ jobs:
             OLD_BACK_IMAGE_ID=$(docker inspect --format='{{.Image}}' mk 2>/dev/null || true)
 
             echo "==> [BACKEND] 최신 이미지 pull"
+            echo "PULL TARGET (BACKEND): ${REGISTRY_URL}/${IMAGE_NAME_BACKEND}:latest"
             docker pull ${REGISTRY_URL}/${IMAGE_NAME_BACKEND}:latest
 
             echo "==> [BACKEND] 기존 컨테이너 mk 중지/삭제"
@@ -137,6 +139,7 @@ jobs:
             OLD_FRONT_IMAGE_ID=$(docker inspect --format='{{.Image}}' mk-front 2>/dev/null || true)
 
             echo "==> [FRONT] 최신 이미지 pull"
+            echo "PULL TARGET (FRONT): ${REGISTRY_URL}/${IMAGE_NAME_FRONTEND}:latest"
             docker pull ${REGISTRY_URL}/${IMAGE_NAME_FRONTEND}:latest
 
             echo "==> [FRONT] 기존 컨테이너 mk-front 중지/삭제"
@@ -194,7 +197,3 @@ jobs:
             echo "==> 오래된 Docker 리소스 자동 정리 (최근 7일 이전 것 삭제)"
             docker system prune -af --filter "until=168h" || true
           EOF
-        env:
-          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
-          IMAGE_NAME_BACKEND: ${{ secrets.IMAGE_NAME_BACKEND }}
-          IMAGE_NAME_FRONTEND: ${{ secrets.IMAGE_NAME_FRONTEND }}
