@@ -105,6 +105,9 @@ jobs:
             fi
 
             echo "[STG] 배포 및 헬스체크 완료"
+
+            echo "[STG] 오래된 Docker 리소스 자동 정리 (최근 7일 이전 것 삭제)"
+            docker system prune -af --filter "until=168h" || true
           EOF
         env:
           REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
