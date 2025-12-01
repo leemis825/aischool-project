@@ -143,8 +143,7 @@ export default function ClockPage() {
   const isLoaded = !!headerStatus;
 
   // ✅ 날짜: 백엔드가 내려준 date_display 우선
-  const dateDisplay =
-    headerStatus?.date_display ?? formatDate(now);
+  const dateDisplay = headerStatus?.date_display ?? formatDate(now);
 
   // ✅ 절기
   const solarTerm = !isLoaded
@@ -171,7 +170,7 @@ export default function ClockPage() {
   if (!isLoaded) {
     weatherText = "날씨 정보를 불러오는 중...";
   } else if (!headerStatus?.weather) {
-    weatherText = "hhgghghgh";
+    weatherText = "날씨 정보 없음";
   } else {
     const { temp, max_temp, min_temp, condition } = headerStatus.weather;
     weatherText = `${condition} ${temp}℃ (최고:${max_temp} / 최저:${min_temp})`;

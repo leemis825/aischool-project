@@ -1,48 +1,38 @@
 # app_fastapi.py
 # -*- coding: utf-8 -*-
 
-from sqlalchemy.orm import Session
-from database import SessionLocal, engine
-from models import Base, MinwonSession
-from fastapi import Depends
-from datetime import datetime
-import uuid
-
-import os
-print("🔥 Loaded app_fastapi from:", os.path.abspath(__file__))
-
+import io
 import json
 import os
-import io
-import urllib.request
 import urllib.parse
-
-from datetime import datetime, date
+import urllib.request
+import uuid
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
 import requests  # 🔹 네이버 TTS 호출용
-from fastapi import FastAPI, HTTPException, Request
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse  # 🔹 음성 스트리밍 응답
-from pydantic import BaseModel, Field
 from openai import OpenAI
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
-from dotenv import load_dotenv
+from database import SessionLocal, engine
+from models import Base, MinwonSession
 from speaker.stt_whisper import transcribe_bytes
-from brain import minwon_engine
+from brain import minwon_engine  # (다른 곳에서 쓰일 가능성 있어 유지)
 from brain.text_session_state import TextSessionState
 from brain.turn_router import choose_issue_for_followup
 from brain.minwon_engine import run_pipeline_once, decide_stage_and_text, save_engine_log
 
-# 🔹 STT 멀티턴(TextSessionState)용 세션 딕셔너리
-TEXT_SESSIONS: Dict[str, TextSessionState] = {}
+# 🔹 .env 로드 (core.config에서 os.getenv를 쓰기 전에)
+load_dotenv()
 
-# 🔹 텍스트-only /api/minwon/text-turn용 세션 딕셔너리
-TEXT_TURN_SESSIONS: Dict[str, Dict[str, Any]] = {}
-
-# 🔹 환경 설정 / 로깅은 core 모듈에서 가져옵니다.
+# 🔹 환경 설정 / 로깅
 from core.config import (
     LOG_DIR,
     WEATHER_API_KEY,
@@ -57,7 +47,23 @@ from core.config import (
     WHISPER_MODEL,
     CHAT_MODEL,
 )
+
 from core.logging import logger, log_event
+
+# 🔹 날씨+절기 통합 서비스
+from services.today_info import get_today_info, TodayInfo
+
+print("🔥 Loaded app_fastapi from:", os.path.abspath(__file__))
+
+# ------------------------------------------------------------
+# 세션 상태 (in-memory)
+# ------------------------------------------------------------
+
+# 🔹 STT 멀티턴(TextSessionState)용 세션 딕셔너리
+TEXT_SESSIONS: Dict[str, TextSessionState] = {}
+
+# 🔹 텍스트-only /api/minwon/text-turn용 세션 딕셔너리
+TEXT_TURN_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
 # ============================================================
 # OpenAI 클라이언트 (다국어 STT + 번역용)
@@ -70,7 +76,7 @@ if not OPENAI_API_KEY:
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-#------------------------ STT 멀티턴 세션관리 ----------------------
+
 def get_state(session_id: str) -> TextSessionState:
     """
     /stt/multi 전용 세션 상태 관리.
@@ -81,8 +87,9 @@ def get_state(session_id: str) -> TextSessionState:
         log_event(session_id, {"type": "session_start", "source": "stt_or_text"})
     return TEXT_SESSIONS[session_id]
 
+
 # ============================================================
-# FastAPI 앱 기본 세팅 (Swagger 설명 포함)
+# FastAPI 앱 기본 세팅
 # ============================================================
 
 app = FastAPI(
@@ -101,9 +108,15 @@ app = FastAPI(
     version="1.0.0",
 )
 
-print("🔥 DEBUG: app_fastapi.py loaded. registered routes:")
-for r in app.routes:
-    print("  -", r.path)
+# CORS: 개발 단계에서는 * 허용, 배포 시에는 도메인 제한 권장
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get(
     "/debug/routes",
@@ -113,8 +126,11 @@ for r in app.routes:
 def debug_routes():
     return [r.path for r in app.routes]
 
+
 # ============================================================
-# 테이블 자동 생성이 필요하면 한 번만 실행 (이미 만들었으면 생략 가능)
+# DB 설정 및 세션 헬퍼
+# ============================================================
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -125,7 +141,7 @@ def get_db():
     finally:
         db.close()
 
-# 🔹 민원세션 저장/갱신 도우미 ---------------------------------
+
 def create_or_update_minwon_session(
     db: Session,
     session_id: str,
@@ -184,8 +200,10 @@ def create_or_update_minwon_session(
     db.commit()
     db.refresh(obj)
     return obj
+
+
 # ============================================================
-# STT 요청 공통 처리 유틸 (폼 파싱 + session_id 추출)
+# STT 요청 공통 처리 유틸
 # ============================================================
 
 async def _parse_stt_request(request: Request) -> Dict[str, Any]:
@@ -231,17 +249,9 @@ async def _parse_stt_request(request: Request) -> Dict[str, Any]:
         "form": form,
     }
 
-# CORS: 개발 단계에서는 * 허용, 배포 시에는 도메인 제한 권장
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # ============================================================
-# 텍스트 모드용 세션 상태 (메모리)
+# 텍스트 모드용 모델
 # ============================================================
 
 class TextTurnRequest(BaseModel):
@@ -292,8 +302,9 @@ class TextTurnResponse(BaseModel):
         ),
     )
 
+
 # ============================================================
-# 날씨 / 음력 / 절기 모델
+# 날씨 / 음력 / 절기 모델 (대기 화면 헤더용)
 # ============================================================
 
 class WeatherInfo(BaseModel):
@@ -304,10 +315,12 @@ class WeatherInfo(BaseModel):
     location: str      # 지역 이름
     feels_like: int    # 체감 온도 (WeatherAPI feelslike_c 사용)
 
+
 class LunarInfo(BaseModel):
     solar_date: str       # 양력 날짜 (YYYY-MM-DD)
     lunar_date: str       # 음력 날짜 (YYYY-MM-DD)
     seasonal_term: str    # 24절기 이름 (없으면 "")
+
 
 class HeaderStatusResponse(BaseModel):
     now_iso: str          # ISO 포맷 현재 시각
@@ -315,6 +328,7 @@ class HeaderStatusResponse(BaseModel):
     weather: Optional[WeatherInfo] = None
     lunar: Optional[LunarInfo] = None
     holiday: str = ""     # 공휴일 이름 (없으면 빈 문자열)
+
 
 # ============================================================
 # 텍스트 기반 민원 분석 단일 호출 API
@@ -362,27 +376,27 @@ async def analyze_minwon(req: MinwonAnalyzeRequest):
         "staff_payload": staff_payload,
     }
 
+
 # ============================================================
 # 대기 화면용 보조 함수들 (실제 외부 API 연동)
 # ============================================================
 
 async def fetch_weather(location: str = "Gwangju") -> WeatherInfo:
     """
-    WeatherAPI.com의 Forecast 기능을 사용하여
-    현재 기온과 오늘 최저/최고/체감 기온을 가져옵니다.
+    WeatherAPI current 정보를 가져와서 헤더에 쓸 간단한 날씨 요약을 만든다.
     """
     print("DEBUG WEATHER API KEY inside fetch_weather:", WEATHER_API_KEY)
     print("[DEBUG] WEATHER location param:", location)
+
     if not WEATHER_API_KEY:
         logger.error("❌ [WeatherAPI] API 키가 없습니다. .env 파일을 확인하세요.")
         raise RuntimeError("WEATHER_API_KEY가 설정되지 않았습니다.")
 
-    url = "http://api.weatherapi.com/v1/forecast.json"
+    url = WEATHER_API_URL
 
     params = {
         "key": WEATHER_API_KEY,
         "q": location,
-        "days": 1,       # 오늘 하루 예보
         "lang": "ko",
         "aqi": "no",
     }
@@ -392,6 +406,7 @@ async def fetch_weather(location: str = "Gwangju") -> WeatherInfo:
             res = await client.get(url, params=params)
             print("[DEBUG] WEATHER status:", res.status_code)
             print("[DEBUG] WEATHER body:", res.text[:200])
+
             if res.status_code != 200:
                 logger.error(f"❌ [WeatherAPI] 호출 실패: {res.status_code} - {res.text}")
                 res.raise_for_status()
@@ -399,14 +414,13 @@ async def fetch_weather(location: str = "Gwangju") -> WeatherInfo:
             data = res.json()
 
         current = data["current"]
-        today_forecast = data["forecast"]["forecastday"][0]["day"]
 
         logger.info(f"✅ [WeatherAPI] 날씨 조회 성공: {location}")
 
         return WeatherInfo(
             temp=round(current["temp_c"]),
-            max_temp=round(today_forecast["maxtemp_c"]),
-            min_temp=round(today_forecast["mintemp_c"]),
+            max_temp=round(current["temp_c"]),  # current만 쓸 거면 일단 동일 값
+            min_temp=round(current["temp_c"]),
             condition=current["condition"]["text"],
             location=data["location"]["name"],
             feels_like=round(current.get("feelslike_c", current["temp_c"])),
@@ -414,7 +428,8 @@ async def fetch_weather(location: str = "Gwangju") -> WeatherInfo:
 
     except Exception as e:
         logger.warning(f"⚠️ [WeatherAPI] 처리 중 에러 발생: {e}")
-        raise e
+        raise HTTPException(status_code=500, detail=f"Weather API error: {e}")
+
 
 async def _fetch_lunar_date(today: date) -> str:
     """
@@ -511,6 +526,7 @@ async def get_lunar_and_seasonal(today: Optional[date] = None) -> LunarInfo:
         seasonal_term=seasonal_term,
     )
 
+
 # ============================================================
 # 0. 헬스 체크 / 기본 라우트
 # ============================================================
@@ -523,6 +539,27 @@ async def get_lunar_and_seasonal(today: Optional[date] = None) -> LunarInfo:
 )
 def root():
     return {"message": "간편민원접수 FastAPI 동작 중"}
+
+
+# ============================================================
+# 오늘의 정보 API (날씨 + 절기) - 새 서비스 사용
+# ============================================================
+
+@app.get(
+    "/api/today-info",
+    response_model=TodayInfo,
+    summary="오늘의 날씨 + 절기/음력 정보",
+    tags=["status"],
+)
+async def api_today_info(
+    location: str = Query("Gwangju", description="도시 이름 또는 좌표(q 파라미터와 동일)")
+):
+    """
+    services.today_info.get_today_info 를 사용해
+    날씨 + 절기를 한 번에 반환하는 엔드포인트.
+    """
+    return await get_today_info(location)
+
 
 # ============================================================
 # 1. 텍스트 민원 세션 생성 (텍스트-only)
@@ -544,6 +581,7 @@ def start_text_session():
 
     return {"session_id": session_id}
 
+
 # ============================================================
 # 2. 텍스트 한 턴 처리 (clarification 결합 포함)
 # ============================================================
@@ -559,7 +597,7 @@ def process_text_turn(
     db: Session = Depends(get_db),
 ):
     """
-     텍스트 한 턴을 민원 엔진에 넘기고,
+    텍스트 한 턴을 민원 엔진에 넘기고,
     세션 상태 + DB(minwon_session, engine_log)에 반영한다.
     """
     # 1) 세션 준비
@@ -590,8 +628,8 @@ def process_text_turn(
 
     # 3) 민원 엔진 호출
     engine_result = run_pipeline_once(use_text, history)
-    
-    # 3-1) 🔹 DB에 민원세션 upsert
+
+    # 3-1) DB에 민원세션 upsert
     create_or_update_minwon_session(
         db=db,
         session_id=session_id,
@@ -599,7 +637,7 @@ def process_text_turn(
         engine_result=engine_result,
     )
 
-    # 3-2) 🔹 엔진 로그 저장 (테이블: engine_log)
+    # 3-2) 엔진 로그 저장
     try:
         save_engine_log(
             db=db,
@@ -609,9 +647,8 @@ def process_text_turn(
             response=engine_result,
         )
     except Exception as e:
-        # DB 로그 실패해도 전체 흐름은 깨지지 않도록
         logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
-        
+
     # 4) history 업데이트
     history.append({"role": "user", "content": use_text})
 
@@ -621,7 +658,7 @@ def process_text_turn(
     else:
         session["pending_clarification"] = None
 
-    # 6) 로그 기록 (사후 분석용)
+    # 6) 로그 기록
     log_event(
         session_id,
         {
@@ -638,6 +675,7 @@ def process_text_turn(
         used_text=use_text,
         engine_result=engine_result,
     )
+
 
 # ============================================================
 # 로그 조회용 모델 & 유틸
@@ -705,6 +743,7 @@ def _summarize_log_file(path: Path) -> Optional[LogSessionSummary]:
         event_types=event_types,
     )
 
+
 # ============================================================
 #  로그 세션 목록 조회
 # ============================================================
@@ -729,6 +768,7 @@ def list_log_sessions(limit: int = 20):
             summaries.append(summary)
 
     return LogSessionListResponse(sessions=summaries)
+
 
 # ============================================================
 #  특정 세션 로그 상세 조회
@@ -767,6 +807,7 @@ def get_log_session_detail(session_id: str, max_events: int = 200):
         events=events,
     )
 
+
 # ============================================================
 # 3. 대기 화면용 헤더 정보 API
 # ============================================================
@@ -781,16 +822,9 @@ async def get_header_status(
     location: str = "Gwangju",
     test_date: Optional[str] = None,
 ):
-    """
-    - location: 날씨 조회용 위치 (기본 Gwangju)
-    - test_date: '2025-11-30' 같이 넣으면 해당 날짜 기준으로
-      date_display / 음력 / 절기를 계산 (개발·테스트용)
-    """
     now = datetime.now()
-
     if test_date:
         try:
-            # 'YYYY-MM-DD' 형식만 지원
             fake_date = datetime.fromisoformat(test_date)
             now = fake_date
         except ValueError:
@@ -798,32 +832,21 @@ async def get_header_status(
 
     date_display = now.strftime("%Y년 %m월 %d일 (%a)")
 
-    weather: Optional[WeatherInfo] = None
-    lunar: Optional[LunarInfo] = None
-    holiday_name: str = ""
+    # 헤더용 날씨 + 음력/절기
+    weather = await fetch_weather(location)
+    lunar = await get_lunar_and_seasonal(now.date())
 
-    try:
-        weather = await fetch_weather(location)
-    except Exception as e:
-        logger.warning(f"Weather API error: {e}")
-
-    try:
-        lunar = await get_lunar_and_seasonal(now.date())
-    except Exception as e:
-        logger.warning(f"Lunar/Seasonal API error: {e}")
-
-    # TODO: 필요하면 여기에서 공휴일 API 연동해서 holiday_name 채우기
-    # 지금은 기본적으로 빈 문자열 반환
     return HeaderStatusResponse(
         now_iso=now.isoformat(),
         date_display=date_display,
         weather=weather,
         lunar=lunar,
-        holiday=holiday_name,
+        holiday="",
     )
 
+
 # ============================================================
-# 다국어 STT + 언어 감지 + 번역 유틸 함수
+# 다국어 STT + 번역 유틸
 # ============================================================
 
 def stt_multilang_bytes(audio_bytes: bytes, file_name: str = "recording.webm") -> str:
@@ -923,10 +946,9 @@ def translate_text(text: str, target_lang: str) -> str:
         logger.warning(f"번역 중 오류 발생: {e}")
         return text
 
+
 # ============================================================
 # 4-A. 음성(STT) + 민원 엔진 — 싱글턴 모드
-#       - 세션 상태 / 멀티턴 관리 없음
-#       - 한 번 STT → 한 번 run_pipeline_once 로 끝나는 단일 호출
 # ============================================================
 
 @app.post(
@@ -962,8 +984,8 @@ async def stt_and_minwon_single(
 
     # 2) 싱글턴이므로 history/clarification 합치기 없이 그대로 엔진에 넣음
     engine_result = run_pipeline_once(original, history=[])
-    
-    # 2-1) 🔹 민원세션 DB upsert
+
+    # 2-1) 민원세션 DB upsert
     create_or_update_minwon_session(
         db=db,
         session_id=session_id,
@@ -971,7 +993,7 @@ async def stt_and_minwon_single(
         engine_result=engine_result,
     )
 
-    # 2-2) 🔹 엔진 로그 DB 저장
+    # 2-2) 엔진 로그 DB 저장
     try:
         save_engine_log(
             db=db,
@@ -982,7 +1004,7 @@ async def stt_and_minwon_single(
         )
     except Exception as e:
         logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
-        
+
     # 3) 로그 기록
     log_event(
         session_id,
@@ -1005,111 +1027,102 @@ async def stt_and_minwon_single(
         "staff_payload": engine_result.get("staff_payload", {}),
     }
 
+
 # ============================================================
 # 4-B. 음성(STT) + 민원 엔진 — 멀티턴 모드
-#       - TextSessionState 사용
-#       - clarification / 이슈 A,B,C 스레드 관리
 # ============================================================
 
-@app.post(
-    "/stt/multi",
-    summary="음성 기반 민원 처리 (멀티턴, 세션/이슈 상태 관리)",
-    tags=["stt"],
-)
+@app.post("/stt/multi", summary="...", tags=["stt"])
 async def stt_and_minwon_multi(
     request: Request,
     db: Session = Depends(get_db),
 ):
     logger.info("=== 🟦 STT(multi) 요청 도착 ===")
-
-    parsed = await _parse_stt_request(request)
-    session_id = parsed["session_id"]
-    audio_bytes = parsed["audio_bytes"]
-    filename = parsed["filename"]
-
-    logger.info(f"[session_id] {session_id}")
-
-    # 🔹 멀티턴용 세션 상태 가져오기 (A/B 스레드 포함)
-    state = get_state(session_id)
-
-    # 1) Whisper STT
-    text = transcribe_bytes(audio_bytes, language="ko", file_name=filename)
-    original = (text or "").strip()
-    logger.info(f"[STT(multi) 결과] {original}")
-
-    if not original:
-        return {
-            "session_id": session_id,
-            "issue_id": None,
-            "text": "",
-            "used_text": "",
-            "engine_result": None,
-            "user_facing": {},
-            "staff_payload": {},
-        }
-
-    # 2) 🔥 멀티턴(clarification) + A/B 스레드 결합
-    effective_text = state.build_effective_text(original)
-
-    # 3) 엔진 실행
-    engine_result = run_pipeline_once(effective_text, [])
-    
-    # 3-1) 🔹 민원세션 DB upsert
-    create_or_update_minwon_session(
-        db=db,
-        session_id=session_id,
-        used_text=effective_text,
-        engine_result=engine_result,
-    )
-
-    # 3-2) 🔹 엔진 로그 DB 저장
     try:
-        save_engine_log(
+        parsed = await _parse_stt_request(request)
+        session_id = parsed["session_id"]
+        audio_bytes = parsed["audio_bytes"]
+        filename = parsed["filename"]
+
+        logger.info(f"[session_id] {session_id}")
+
+        state = get_state(session_id)
+
+        text = transcribe_bytes(audio_bytes, language="ko", file_name=filename)
+        original = (text or "").strip()
+        logger.info(f"[STT(multi) 결과] {original}")
+
+        if not original:
+            return {
+                "session_id": session_id,
+                "issue_id": None,
+                "text": "",
+                "used_text": "",
+                "engine_result": None,
+                "user_facing": {},
+                "staff_payload": {},
+            }
+
+        effective_text = state.build_effective_text(original)
+
+        engine_result = run_pipeline_once(effective_text, [])
+
+        create_or_update_minwon_session(
             db=db,
             session_id=session_id,
-            stage=engine_result.get("stage", "unknown"),
-            request_text=effective_text,
-            response=engine_result,
+            used_text=effective_text,
+            engine_result=engine_result,
         )
-    except Exception as e:
-        logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
-        
-    # 4) 🔥 A/B/C 이슈 라우팅
-    turn = state.register_turn(
-        user_raw=original,
-        effective_text=effective_text,
-        engine_result=engine_result,
-    )
-    issue_id = turn.issue_id  # ← A/B/C 구분됨
 
-    # 5) 로그 기록
-    log_event(
-        session_id,
-        {
-            "type": "stt_turn",
+        try:
+            save_engine_log(
+                db=db,
+                session_id=session_id,
+                stage=engine_result.get("stage", "unknown"),
+                request_text=effective_text,
+                response=engine_result,
+            )
+        except Exception as e:
+            logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
+
+        turn = state.register_turn(
+            user_raw=original,
+            effective_text=effective_text,
+            engine_result=engine_result,
+        )
+        issue_id = turn.issue_id
+
+        log_event(
+            session_id,
+            {
+                "type": "stt_turn",
+                "issue_id": issue_id,
+                "input_text": original,
+                "used_text": effective_text,
+                "engine_result": engine_result,
+            },
+        )
+
+        logger.info("=== 🟩 STT(multi) 응답 완료 ===")
+
+        return {
+            "session_id": session_id,
             "issue_id": issue_id,
-            "input_text": original,
+            "text": original,
             "used_text": effective_text,
             "engine_result": engine_result,
-        },
-    )
+            "user_facing": engine_result.get("user_facing", {}),
+            "staff_payload": engine_result.get("staff_payload", {}),
+        }
 
-    logger.info("=== 🟩 STT(multi) 응답 완료 ===")
+    except Exception as e:
+        logger.exception("💥 STT(multi) 처리 중 예외 발생")
+        # detail에 에러 메시지까지 넣으면 프론트 네트워크 탭에서도 바로 보임
+        raise HTTPException(status_code=500, detail=f"STT(multi) 내부 오류: {e}")
 
-    return {
-        "session_id": session_id,
-        "issue_id": issue_id,
-        "text": original,
-        "used_text": effective_text,
-        "engine_result": engine_result,
-        "user_facing": engine_result.get("user_facing", {}),
-        "staff_payload": engine_result.get("staff_payload", {}),
-    }
 
 # ============================================================
-# 4-C. 레거시 /stt 엔드포인트
-#       - 현재는 멀티턴(/stt/multi)와 동일하게 동작
-#       - 프론트에서 점진적으로 /stt/single 또는 /stt/multi 로 옮겨가면 됨
+# 4-C. 레거시 /stt 엔드포인트 (현재는 /stt/multi와 동일)
 # ============================================================
 
 @app.post(
@@ -1117,8 +1130,14 @@ async def stt_and_minwon_multi(
     summary="(레거시) 음성 기반 민원 처리 — 현재는 멀티턴과 동일",
     tags=["stt"],
 )
-async def stt_and_minwon(request: Request):
-    return await stt_and_minwon_multi(request)
+async def stt_and_minwon(
+    request: Request,
+    db: Session = Depends(get_db),   # ✅ DB 세션도 의존성으로 받기
+):
+    # ✅ FastAPI가 주입해 준 db(Session)를 직접 넘겨준다
+    return await stt_and_minwon_multi(request, db)
+
+
 
 # ============================================================
 # TTS 요청 모델 & 엔드포인트
@@ -1152,16 +1171,6 @@ class TtsRequest(BaseModel):
 def tts(req: TtsRequest):
     """
     텍스트를 네이버 CLOVA TTS로 변환하여 MP3 스트리밍으로 반환합니다.
-
-    프론트 예시:
-    - 기본(조금 느리게):
-      { "text": "안녕하세요.", "speed": -2 }
-
-    - 더 천천히:
-      { "text": "안녕하세요.", "speed": -4 }
-
-    - speaker 변경:
-      { "text": "안녕하세요.", "speaker": "jinho", "speed": -1 }
     """
     if not NAVER_API_KEY_ID or not NAVER_API_KEY:
         raise HTTPException(
@@ -1209,6 +1218,7 @@ def tts(req: TtsRequest):
         )
 
     return StreamingResponse(io.BytesIO(res.content), media_type="audio/mpeg")
+
 
 # ============================================================
 # 5. 다국어 음성(STT) + 민원 엔진 한 번에 처리
@@ -1314,7 +1324,8 @@ async def stt_and_minwon_multilang(request: Request):
         "user_facing_for_user": user_facing_for_user,
         "staff_payload": staff_payload,
     }
-    
+
+
 # ============================================================
 # 6. DB 연결 테스트용 엔드포인트
 # ============================================================
@@ -1349,9 +1360,11 @@ def db_test(db: Session = Depends(get_db)):
 # ============================================================
 # 디버그용: 최종 라우트 목록 출력
 # ============================================================
+
 print("🔥 FINAL ROUTES:")
 for r in app.routes:
     print("  -", r.path)
+
 
 # ============================================================
 # uvicorn 실행용 엔트리포인트
