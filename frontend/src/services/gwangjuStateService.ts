@@ -1,10 +1,12 @@
+// frontend/src/services/gwangjuStateService.ts
+
 import { API_BASE_URL } from "./apiConfig";
 
 export interface WeatherInfo {
   temp: number;
   max_temp: number;
   min_temp: number;
-  feels_like: number;
+  feels_like: number; // ✅ 백엔드에도 추가해 줄 예정
   condition: string;
   location: string;
 }
@@ -19,7 +21,7 @@ export interface HeaderStatus {
   now_iso: string;
   date_display: string;
   weather: WeatherInfo | null;
-  lunar: LunarInfo;
+  lunar: LunarInfo | null; // ✅ 백엔드가 null 줄 수 있으므로
   holiday: string;
 }
 
@@ -30,9 +32,12 @@ export async function getHeaderStatus(
   let url = `${API_BASE_URL}/api/status/header?location=${encodeURIComponent(
     location
   )}`;
+
+  // ✅ 테스트용으로 날짜를 바꾸고 싶을 때만 사용
   if (test_date) {
     url += `&test_date=${encodeURIComponent(test_date)}`;
   }
+
   console.log("📡 calling headerStatus:", url);
 
   const res = await fetch(url);

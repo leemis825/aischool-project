@@ -12,6 +12,16 @@ export default function SummaryPage() {
     summary?: string;
     engineResult?: any;
   };
+  // 🔥 engineResult 를 sessionStorage 에 백업 (안전장치)
+  useEffect(() => {
+    if (engineResult) {
+      sessionStorage.setItem(
+        "lastEngineResult",
+        JSON.stringify(engineResult)
+    );
+  }
+}, [engineResult]);
+
 
   // 🔹 백엔드에서 온 값들 꺼내기 (없으면 undefined)
   const staffSummary: string | undefined = engineResult?.staff_payload?.summary;

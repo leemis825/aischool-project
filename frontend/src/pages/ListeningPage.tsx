@@ -253,6 +253,13 @@ export default function ListeningPage() {
       );
       console.log("🔊 STT+민원 엔진 결과:", result);
 
+      if(result.engine_result){
+        sessionStorage.setItem(
+          "last_engine_result",
+          JSON.stringify(result.engine_result)
+        );
+      }
+
       const finalText = result.text || "(빈 텍스트)";
       setSttResult(finalText);
       setIsUploading(false);
