@@ -122,7 +122,6 @@ export default function ClockPage() {
     const fetchStatus = async () => {
       try {
         setError(null);
-        // ✅ 기본은 오늘 날짜, 필요하면 test_date 넣어서 호출 가능
         const data = await getHeaderStatus("Gwangju");
         setHeaderStatus(data);
       } catch (e) {
@@ -161,9 +160,7 @@ export default function ClockPage() {
   };
 
   const holidayRaw = headerStatus?.holiday;
-  const holidayText = holidayRaw
-    ? HOLIDAY_MAP[holidayRaw] ?? holidayRaw
-    : "";
+  const holidayText = holidayRaw ? HOLIDAY_MAP[holidayRaw] ?? holidayRaw : "";
 
   // ✅ 날씨 텍스트
   let weatherText: string;
