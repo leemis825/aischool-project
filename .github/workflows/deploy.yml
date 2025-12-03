@@ -66,8 +66,19 @@ jobs:
             IMAGE_NAME_BACKEND="${{ secrets.IMAGE_NAME_BACKEND }}"
             IMAGE_NAME_FRONTEND="${{ secrets.IMAGE_NAME_FRONTEND }}"
 
+            echo "==> Docker 디스크 사용량 확인"
+            df -h || true
+            docker system df || true
+
+            echo "==> Docker 리소스 정리 (강제)"
+            # 사용하지 않는 컨테이너/이미지/네트워크/빌드캐시 삭제
+            docker system prune -af || true
+            # 필요하다면 사용하지 않는 볼륨도 정리 (DB를 volume으로 안 쓴다는 전제)
+            docker volume prune -f || true
+
             # 공용 네트워크 보장 (이미 있으면 에러 무시)
             docker network create minwon-net 2>/dev/null || true
+
 
             ##############
             # 1) 백엔드 배포
