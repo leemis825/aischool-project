@@ -94,6 +94,8 @@ def get_state(session_id: str) -> TextSessionState:
 # FastAPI 앱 기본 세팅
 # ============================================================
 
+
+
 app = FastAPI(
     title="간편민원접수 백엔드 API",
     description="""
@@ -387,6 +389,8 @@ async def fetch_weather(location: str = "Gwangju") -> WeatherInfo:
     """
     WeatherAPI current 정보를 가져와서 헤더에 쓸 간단한 날씨 요약을 만든다.
     """
+    print("🔥 [DEBUG] WEATHER_API_KEY in fetch_weather:", repr(WEATHER_API_KEY))
+
     print("DEBUG WEATHER API KEY inside fetch_weather:", WEATHER_API_KEY)
     print("[DEBUG] WEATHER location param:", location)
 
