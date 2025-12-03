@@ -16,7 +16,7 @@ export default function ComplaintPage() {
     const speakIntro = async () => {
       try {
         const text =
-          "안녕하세요. 화면을 누르고 민원을 말씀해 주세요.";
+          "안녕하세요. 화면 어디든 터치 후 민원을 말씀해 주세요.";
         console.log("🎧 calling TTS intro:", text);
 
         const blob = await requestTts(text);
@@ -44,7 +44,7 @@ export default function ComplaintPage() {
     <Layout
       onClick={handleClick}
       title="민원접수"
-      content={`화면을 누르고
+      content={`버튼 터치 후 
         민원을 말씀해주세요`}
       topImage="src/assets/top2.png"
       image="src/assets/img6.png"

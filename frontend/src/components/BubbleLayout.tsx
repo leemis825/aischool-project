@@ -101,9 +101,9 @@ const bubbleTailStyle: CSSProperties = {
 const bubbleTextStyle: CSSProperties = {
   fontFamily: "all-bold",
   fontWeight: 400,
-  fontSize: "47px",
+  fontSize: "50px",
   textAlign: "center",
-  lineHeight: "117px",
+  lineHeight: "90px",
   color: "#000000",
 };
 const smallTextStyle: CSSProperties = {
