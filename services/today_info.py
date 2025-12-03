@@ -56,26 +56,51 @@ async def fetch_weather(location: str = "Gwangju") -> WeatherInfo:
     - 체감 온도
     를 가져온다.
     """
+    # 1) 키가 없을 때: 서버 안 죽게 기본값 리턴
     if not WEATHER_API_KEY:
-        raise RuntimeError("WEATHER_API_KEY 가 설정되지 않았습니다.")
+        logger.warning("WEATHER_API_KEY 가 없어 날씨 정보를 더미 값으로 반환합니다.")
+        return WeatherInfo(
+            location=location,
+            temp_c=None,
+            condition_text="",
+            is_day=True,
+            temp_min_c=None,
+            temp_max_c=None,
+            feelslike_c=None,
+        )
 
     params = {
         "key": WEATHER_API_KEY,
         "q": location,
-        "days": 1,      # 오늘 하루 예보
+        "days": 1,
         "lang": "ko",
         "aqi": "no",
     }
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        res = await client.get(WEATHER_API_URL, params=params)
-        res.raise_for_status()
-        data = res.json()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get(WEATHER_API_URL, params=params)
+            logger.info(
+                f"[WeatherAPI] status={res.status_code}, body[:200]={res.text[:200]}"
+            )
+            res.raise_for_status()
+            data = res.json()
+    except Exception as e:
+        # 2) 외부 API 호출이 어떤 이유로든 실패해도 서버는 안 죽게
+        logger.warning(f"[WeatherAPI] 호출 중 에러 발생: {e} → 더미 값으로 대체합니다.")
+        return WeatherInfo(
+            location=location,
+            temp_c=None,
+            condition_text="",
+            is_day=True,
+            temp_min_c=None,
+            temp_max_c=None,
+            feelslike_c=None,
+        )
 
-    # 안전하게 꺼내기
+    # 3) 정상 응답일 때 데이터 파싱
     location_name = data.get("location", {}).get("name", location)
     current = data.get("current", {}) or {}
-    # forecast.json 인 경우 day 정보에서 최고/최저 확인
     forecast_day = (
         data.get("forecast", {})
         .get("forecastday", [{}])[0]

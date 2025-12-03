@@ -1,4 +1,6 @@
 # app_fastapi.py
+# pyright: reportAttributeAccessIssue=false
+
 # -*- coding: utf-8 -*-
 
 import io
@@ -19,10 +21,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse  # 🔹 음성 스트리밍 응답
 from openai import OpenAI
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+# from sqlalchemy.orm import Session
 
-from database import SessionLocal, engine
-from models import Base, MinwonSession
+# from database import SessionLocal, engine
+# from models import Base, MinwonSession
 from speaker.stt_whisper import transcribe_bytes
 from brain import minwon_engine  # (다른 곳에서 쓰일 가능성 있어 유지)
 from brain.text_session_state import TextSessionState
@@ -92,6 +94,8 @@ def get_state(session_id: str) -> TextSessionState:
 # FastAPI 앱 기본 세팅
 # ============================================================
 
+
+
 app = FastAPI(
     title="간편민원접수 백엔드 API",
     description="""
@@ -131,75 +135,75 @@ def debug_routes():
 # DB 설정 및 세션 헬퍼
 # ============================================================
 
-Base.metadata.create_all(bind=engine)
+# Base.metadata.create_all(bind=engine)
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# def get_db():
+#     db = SessionLocal()
+#     try:
+#         yield db
+#     finally:
+#         db.close()
 
 
-def create_or_update_minwon_session(
-    db: Session,
-    session_id: str,
-    used_text: str,
-    engine_result: Dict[str, Any],
-):
-    """
-    - 한 세션(session_id)당 1행 유지
-    - 이미 있으면 내용만 갱신, 없으면 새로 INSERT
-    """
-    if not engine_result:
-        return
+# def create_or_update_minwon_session(
+#     db: Session,
+#     session_id: str,
+#     used_text: str,
+#     engine_result: Dict[str, Any],
+# ):
+#     """
+#     - 한 세션(session_id)당 1행 유지
+#     - 이미 있으면 내용만 갱신, 없으면 새로 INSERT
+#     """
+#     if not engine_result:
+#         return
 
-    minwon_type = engine_result.get("minwon_type") or "기타"
-    handling_type = engine_result.get("handling_type") or "simple_guide"
+#     minwon_type = engine_result.get("minwon_type") or "기타"
+#     handling_type = engine_result.get("handling_type") or "simple_guide"
 
-    staff_payload = engine_result.get("staff_payload") or {}
-    risk_level = staff_payload.get("risk_level") or "보통"
+#     staff_payload = engine_result.get("staff_payload") or {}
+#     risk_level = staff_payload.get("risk_level") or "보통"
 
-    need_official = bool(engine_result.get("need_official_ticket"))
-    need_call = bool(engine_result.get("need_call_transfer"))
+#     need_official = bool(engine_result.get("need_official_ticket"))
+#     need_call = bool(engine_result.get("need_call_transfer"))
 
-    if need_official:
-        status = "ticket_required"
-    elif need_call:
-        status = "call_recommended"
-    else:
-        status = "guide_only"
+#     if need_official:
+#         status = "ticket_required"
+#     elif need_call:
+#         status = "call_recommended"
+#     else:
+#         status = "guide_only"
 
-    obj = (
-        db.query(MinwonSession)
-        .filter(MinwonSession.session_id == session_id)
-        .first()
-    )
+#     obj = (
+#         db.query(MinwonSession)
+#         .filter(MinwonSession.session_id == session_id)
+#         .first()
+#     )
 
-    if obj is None:
-        # 🔸 최초 생성
-        obj = MinwonSession(
-            session_id=session_id,
-            received_at=datetime.utcnow(),
-            text_raw=used_text,
-            minwon_type=minwon_type,
-            risk_level=risk_level,
-            handling_type=handling_type,
-            status=status,
-        )
-        db.add(obj)
-    else:
-        # 🔸 같은 세션에 대해 내용이 바뀔 때 갱신
-        obj.text_raw = used_text
-        obj.minwon_type = minwon_type
-        obj.risk_level = risk_level
-        obj.handling_type = handling_type
-        obj.status = status
+#     if obj is None:
+#         # 🔸 최초 생성
+#         obj = MinwonSession(
+#             session_id=session_id,
+#             received_at=datetime.utcnow(),
+#             text_raw=used_text,
+#             minwon_type=minwon_type,
+#             risk_level=risk_level,
+#             handling_type=handling_type,
+#             status=status,
+#         )
+#         db.add(obj)
+#     else:
+#         # 🔸 같은 세션에 대해 내용이 바뀔 때 갱신
+#         obj.text_raw = used_text
+#         obj.minwon_type = minwon_type
+#         obj.risk_level = risk_level
+#         obj.handling_type = handling_type
+#         obj.status = status
 
-    db.commit()
-    db.refresh(obj)
-    return obj
+#     db.commit()
+#     db.refresh(obj)
+#     return obj
 
 
 # ============================================================
@@ -385,6 +389,8 @@ async def fetch_weather(location: str = "Gwangju") -> WeatherInfo:
     """
     WeatherAPI current 정보를 가져와서 헤더에 쓸 간단한 날씨 요약을 만든다.
     """
+    print("🔥 [DEBUG] WEATHER_API_KEY in fetch_weather:", repr(WEATHER_API_KEY))
+
     print("DEBUG WEATHER API KEY inside fetch_weather:", WEATHER_API_KEY)
     print("[DEBUG] WEATHER location param:", location)
 
@@ -594,7 +600,6 @@ def start_text_session():
 )
 def process_text_turn(
     body: TextTurnRequest,
-    db: Session = Depends(get_db),
 ):
     """
     텍스트 한 턴을 민원 엔진에 넘기고,
@@ -630,24 +635,24 @@ def process_text_turn(
     engine_result = run_pipeline_once(use_text, history)
 
     # 3-1) DB에 민원세션 upsert
-    create_or_update_minwon_session(
-        db=db,
-        session_id=session_id,
-        used_text=use_text,
-        engine_result=engine_result,
-    )
+    # create_or_update_minwon_session(
+    #     db=db,
+    #     session_id=session_id,
+    #     used_text=use_text,
+    #     engine_result=engine_result,
+    # )
 
     # 3-2) 엔진 로그 저장
-    try:
-        save_engine_log(
-            db=db,
-            session_id=session_id,
-            stage=engine_result.get("stage", "unknown"),
-            request_text=use_text,
-            response=engine_result,
-        )
-    except Exception as e:
-        logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
+    # try:
+    #     save_engine_log(
+    #         db=db,
+    #         session_id=session_id,
+    #         stage=engine_result.get("stage", "unknown"),
+    #         request_text=use_text,
+    #         response=engine_result,
+    #     )
+    # except Exception as e:
+    #     logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
 
     # 4) history 업데이트
     history.append({"role": "user", "content": use_text})
@@ -904,7 +909,7 @@ def detect_language(text: str) -> str:
             temperature=0.0,
             max_tokens=8,
         )
-        code = resp.choices[0].message.content.strip().lower()
+        code = (resp.choices[0].message.content or "").strip().lower()
         code = code.replace("`", "").replace(" ", "")
 
         for cand in ["ko", "en", "ja", "zh", "vi"]:
@@ -941,7 +946,8 @@ def translate_text(text: str, target_lang: str) -> str:
             temperature=0.2,
             max_tokens=400,
         )
-        return resp.choices[0].message.content.strip()
+        return (resp.choices[0].message.content or "").strip()
+
     except Exception as e:
         logger.warning(f"번역 중 오류 발생: {e}")
         return text
@@ -958,7 +964,6 @@ def translate_text(text: str, target_lang: str) -> str:
 )
 async def stt_and_minwon_single(
     request: Request,
-    db: Session = Depends(get_db),
 ):
     logger.info("=== 🟦 STT(single) 요청 도착 ===")
 
@@ -986,24 +991,24 @@ async def stt_and_minwon_single(
     engine_result = run_pipeline_once(original, history=[])
 
     # 2-1) 민원세션 DB upsert
-    create_or_update_minwon_session(
-        db=db,
-        session_id=session_id,
-        used_text=original,
-        engine_result=engine_result,
-    )
+    # create_or_update_minwon_session(
+    #     db=db,
+    #     session_id=session_id,
+    #     used_text=original,
+    #     engine_result=engine_result,
+    # )
 
     # 2-2) 엔진 로그 DB 저장
-    try:
-        save_engine_log(
-            db=db,
-            session_id=session_id,
-            stage=engine_result.get("stage", "unknown"),
-            request_text=original,
-            response=engine_result,
-        )
-    except Exception as e:
-        logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
+    # try:
+    #     save_engine_log(
+    #         db=db,
+    #         session_id=session_id,
+    #         stage=engine_result.get("stage", "unknown"),
+    #         request_text=original,
+    #         response=engine_result,
+    #     )
+    # except Exception as e:
+    #     logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
 
     # 3) 로그 기록
     log_event(
@@ -1035,7 +1040,6 @@ async def stt_and_minwon_single(
 @app.post("/stt/multi", summary="...", tags=["stt"])
 async def stt_and_minwon_multi(
     request: Request,
-    db: Session = Depends(get_db),
 ):
     logger.info("=== 🟦 STT(multi) 요청 도착 ===")
     try:
@@ -1067,23 +1071,23 @@ async def stt_and_minwon_multi(
 
         engine_result = run_pipeline_once(effective_text, [])
 
-        create_or_update_minwon_session(
-            db=db,
-            session_id=session_id,
-            used_text=effective_text,
-            engine_result=engine_result,
-        )
+        # create_or_update_minwon_session(
+        #     db=db,
+        #     session_id=session_id,
+        #     used_text=effective_text,
+        #     engine_result=engine_result,
+        # )
 
-        try:
-            save_engine_log(
-                db=db,
-                session_id=session_id,
-                stage=engine_result.get("stage", "unknown"),
-                request_text=effective_text,
-                response=engine_result,
-            )
-        except Exception as e:
-            logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
+        # try:
+        #     save_engine_log(
+        #         db=db,
+        #         session_id=session_id,
+        #         stage=engine_result.get("stage", "unknown"),
+        #         request_text=effective_text,
+        #         response=engine_result,
+        #     )
+        # except Exception as e:
+        #     logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
 
         turn = state.register_turn(
             user_raw=original,
@@ -1132,10 +1136,10 @@ async def stt_and_minwon_multi(
 )
 async def stt_and_minwon(
     request: Request,
-    db: Session = Depends(get_db),   # ✅ DB 세션도 의존성으로 받기
+    # db: Session = Depends(get_db),   # ✅ DB 세션도 의존성으로 받기
 ):
     # ✅ FastAPI가 주입해 준 db(Session)를 직접 넘겨준다
-    return await stt_and_minwon_multi(request, db)
+    return await stt_and_minwon_multi(request)
 
 
 
@@ -1330,31 +1334,31 @@ async def stt_and_minwon_multilang(request: Request):
 # 6. DB 연결 테스트용 엔드포인트
 # ============================================================
 
-@app.post("/db-test")
-def db_test(db: Session = Depends(get_db)):
-    """
-    DB 연결 테스트용: 가짜 세션 1개 삽입 후 다시 조회해서 돌려줌
-    """
-    session_id = str(uuid.uuid4())
+# @app.post("/db-test")
+# def db_test(db: Session = Depends(get_db)):
+#     """
+#     DB 연결 테스트용: 가짜 세션 1개 삽입 후 다시 조회해서 돌려줌
+#     """
+#     session_id = str(uuid.uuid4())
 
-    new_session = MinwonSession(
-        session_id=session_id,
-        received_at=datetime.utcnow(),
-        text_raw="테스트 민원입니다.",
-        minwon_type="테스트",
-        risk_level="보통",
-        handling_type="simple_guide",
-        status="test",
-    )
+#     new_session = MinwonSession(
+#         session_id=session_id,
+#         received_at=datetime.utcnow(),
+#         text_raw="테스트 민원입니다.",
+#         minwon_type="테스트",
+#         risk_level="보통",
+#         handling_type="simple_guide",
+#         status="test",
+#     )
 
-    db.add(new_session)
-    db.commit()
-    db.refresh(new_session)
+#     db.add(new_session)
+#     db.commit()
+#     db.refresh(new_session)
 
-    return {
-        "inserted_session_id": new_session.session_id,
-        "received_at": new_session.received_at.isoformat(),
-    }
+#     return {
+#         "inserted_session_id": new_session.session_id,
+#         "received_at": new_session.received_at.isoformat(),
+#     }
 
 
 # ============================================================
