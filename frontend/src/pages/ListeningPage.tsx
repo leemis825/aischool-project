@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { sttAndMinwon, type SttMinwonResponse } from "../services/sttService";
 import { requestTts } from "../services/ttsService";
 import SpeakerImg from "../assets/speaker.png";
+import { saveComplaintFromStt } from "../services/complaintService";
 
 export default function ListeningPage() {
   const navigate = useNavigate();
@@ -253,7 +254,7 @@ export default function ListeningPage() {
       );
       console.log("🔊 STT+민원 엔진 결과:", result);
 
-      if(result.engine_result){
+      if (result.engine_result) {
         sessionStorage.setItem(
           "last_engine_result",
           JSON.stringify(result.engine_result)
@@ -269,6 +270,7 @@ export default function ListeningPage() {
         sessionIdRef.current = result.session_id;
         setSessionId(result.session_id);
         console.log("✅ 세션 ID 최초 설정:", result.session_id);
+        sessionStorage.setItem("last_session_id", result.session_id);
       } else if (
         sessionIdRef.current &&
         result.session_id &&
@@ -282,6 +284,12 @@ export default function ListeningPage() {
           }
         );
         // 여기서는 그냥 무시하고 기존 sessionIdRef.current를 계속 사용
+      }
+      try {
+        await saveComplaintFromStt(result, null);
+      } catch (err) {
+        console.error("민원 저장 중 오류(화면 흐름은 계속 진행):", err);
+        // 굳이 사용자에게 에러 표시 안 하고, 흐름만 이어가도 됨
       }
 
       await callTTS(
