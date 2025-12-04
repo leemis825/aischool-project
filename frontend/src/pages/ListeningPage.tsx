@@ -292,10 +292,29 @@ export default function ListeningPage() {
       const stage = result.engine_result?.stage;
 
       if (stage === "clarification") {
-        console.log("🔁 clarification 단계 – 다시 녹음 대기");
+        console.log("🔁 clarification 단계 – 위치 추가 질문 후 다시 녹음");
+
+        // 🔊 엔진이 내려준 질문/안내 멘트 사용
+        const clarifyText =
+          (result.engine_result?.user_facing?.main_message || "") +
+          " " +
+          (result.engine_result?.user_facing?.next_action_guide || "");
+
+        await callTTS(
+          clarifyText.trim() ||
+            "죄송하지만, 정확한 위치를 한 번만 더 알려 주시면 좋겠습니다."
+        );
+
+        // 질문 음성이 나간 뒤에 다시 녹음 준비
         await setupRecorderAndVisualizer();
-        return;
+        return; // ⬅️ 여기서 종료, summary로 안 감
       }
+
+      // ❗ clarification이 아닌 경우에만 summary로 이동 + 안내 TTS
+      await callTTS(
+        result.user_facing?.main_message ??
+          "말씀해 주셔서 감사합니다. 잠시만 기다려 주세요."
+      );
 
       navigate("/summary", {
         state: {

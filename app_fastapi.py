@@ -1160,7 +1160,7 @@ class TtsRequest(BaseModel):
         description="CLOVA Voice speaker 이름 (예: nara, jinho 등)",
     )
     speed: int = Field(
-        default=-2,
+        default=2,
         ge=-5,
         le=5,
         description="말하기 속도 (-5=매우 느림, 0=보통, 5=매우 빠름)",
@@ -1173,6 +1173,7 @@ class TtsRequest(BaseModel):
     tags=["tts"],
 )
 def tts(req: TtsRequest):
+    print("🔥 [DEBUG] TTS 요청 speed:", req.speed)
     """
     텍스트를 네이버 CLOVA TTS로 변환하여 MP3 스트리밍으로 반환합니다.
     """
