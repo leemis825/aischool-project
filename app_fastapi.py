@@ -16,11 +16,12 @@ from typing import Any, Dict, List, Optional
 import httpx
 import requests  # 🔹 네이버 TTS 호출용
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse  # 🔹 음성 스트리밍 응답
+from fastapi.responses import FileResponse, StreamingResponse  # 🔹 음성 스트리밍 응답
 from openai import OpenAI
 from pydantic import BaseModel, Field
+from core.report_pdf import build_staff_report_pdf
 # from sqlalchemy.orm import Session
 
 # from database import SessionLocal, engine
@@ -33,6 +34,9 @@ from brain.minwon_engine import run_pipeline_once, decide_stage_and_text, save_e
 
 # 🔹 .env 로드 (core.config에서 os.getenv를 쓰기 전에)
 load_dotenv()
+
+
+router = APIRouter()
 
 # 🔹 환경 설정 / 로깅
 from core.config import (
@@ -1329,6 +1333,23 @@ async def stt_and_minwon_multilang(request: Request):
         "user_facing_for_user": user_facing_for_user,
         "staff_payload": staff_payload,
     }
+
+# ============================================================
+# 5. 민원 처리 요약 보고서 PDF 생성 엔드포인트
+# ============================================================
+
+@router.post("/reports/minwon-pdf")
+def create_minwon_report(staff_payload: dict):
+    file_name = f"minwon_report_{uuid.uuid4().hex}.pdf"
+    file_path = str(Path("/tmp") / file_name)
+
+    build_staff_report_pdf(staff_payload, file_path)
+
+    return FileResponse(
+        path=file_path,
+        filename="민원처리요약보고서.pdf",
+        media_type="application/pdf",
+    )
 
 
 # ============================================================

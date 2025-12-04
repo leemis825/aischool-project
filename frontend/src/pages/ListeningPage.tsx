@@ -13,7 +13,7 @@ export default function ListeningPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sttResult, setSttResult] = useState<string>("");
-  const [ttsUrl, setTtsUrl] = useState<string | null>(null); // 🔹 사용자 안내 TTS URL
+  const [ttsUrl, setTtsUrl] = useState<string | null>(null); // 🔹 STT 결과 안내 TTS URL
   const [volume, setVolume] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null); // 🔹 백엔드 세션 ID
   const sessionIdRef = useRef<string | null>(null);
@@ -31,6 +31,10 @@ export default function ListeningPage() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null); // 현재는 안 쓰지만 남겨둠(확장용)
+
+  // 🔹 안내 멘트(Audio) ref (여기가 새로 추가된 핵심)
+  const introAudioRef = useRef<HTMLAudioElement | null>(null);
+  const introAudioUrlRef = useRef<string | null>(null);
 
   // 🔊 볼륨 계산 → 이미지 튕김용
   const trackVolume = () => {
@@ -77,6 +81,23 @@ export default function ListeningPage() {
     ctx.clearRect(0, 0, width, height);
     ctx.fillStyle = "#4E9948";
     ctx.fillRect(0, 0, width, height);
+  };
+
+  // 🔹 안내 멘트 오디오 정리용 헬퍼
+  const stopIntroAudio = () => {
+    if (introAudioRef.current) {
+      try {
+        introAudioRef.current.pause();
+        introAudioRef.current.currentTime = 0;
+      } catch {
+        // ignore
+      }
+      introAudioRef.current = null;
+    }
+    if (introAudioUrlRef.current) {
+      URL.revokeObjectURL(introAudioUrlRef.current);
+      introAudioUrlRef.current = null;
+    }
   };
 
   // 🔹 녹음 + 볼륨 추적 세팅
@@ -160,20 +181,30 @@ export default function ListeningPage() {
         console.log("[ListeningPage] 안내 TTS:", text);
         const blob = await requestTts(text);
         const url = URL.createObjectURL(blob);
+
+        // 이전 안내 오디오가 있다면 정리
+        stopIntroAudio();
+
         const audio = new Audio(url);
+        introAudioRef.current = audio;
+        introAudioUrlRef.current = url;
 
         audio.onended = () => {
-          URL.revokeObjectURL(url);
+          stopIntroAudio();
           setupRecorderAndVisualizer();
         };
 
         audio.onerror = () => {
-          URL.revokeObjectURL(url);
+          stopIntroAudio();
           // 재생 실패해도 바로 녹음 시작
           setupRecorderAndVisualizer();
         };
 
-        audio.play();
+        audio.play().catch((err) => {
+          console.error("ListeningPage 안내 음성 재생 실패:", err);
+          stopIntroAudio();
+          setupRecorderAndVisualizer();
+        });
       } catch (e) {
         console.error("ListeningPage 안내 음성 오류:", e);
         // TTS 호출 자체가 실패해도 녹음은 시작
@@ -209,6 +240,7 @@ export default function ListeningPage() {
       }
 
       stopVisualizer();
+      stopIntroAudio(); // 🔥 페이지 떠날 때 안내 멘트 완전히 정지
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -253,7 +285,7 @@ export default function ListeningPage() {
       );
       console.log("🔊 STT+민원 엔진 결과:", result);
 
-      if(result.engine_result){
+      if (result.engine_result) {
         sessionStorage.setItem(
           "last_engine_result",
           JSON.stringify(result.engine_result)

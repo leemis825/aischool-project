@@ -1,7 +1,9 @@
+// src/pages/MessagePage.tsx
 import { useNavigate } from "react-router-dom";
 import { useEffect, useRef } from "react";
 import BubbleLayout from "../components/BubbleLayout.js";
 import { requestTts } from "../services/ttsService";
+import { playTtsUrl, stopTts } from "../services/audioManager";
 
 export default function MessagePage() {
   const navigate = useNavigate();
@@ -11,10 +13,12 @@ export default function MessagePage() {
   };
 
   const goToPhone = () => {
+    stopTts(); // 🔊 재생 중이면 끊고 이동
     navigate("/phone");
   };
 
   const goToSuccess = () => {
+    stopTts();
     navigate("/success");
   };
 
@@ -33,18 +37,20 @@ export default function MessagePage() {
           "아니오 버튼을 누르시면 바로 접수 완료 화면으로 이동합니다.";
         const blob = await requestTts(text);
         const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
 
-        audio.onended = () => URL.revokeObjectURL(url);
-        audio.onerror = () => URL.revokeObjectURL(url);
-
-        audio.play();
+        // 🔊 전역 오디오 매니저로 재생
+        playTtsUrl(url);
       } catch (e) {
         console.error("MessagePage TTS 오류:", e);
       }
     };
 
     speak();
+
+    // 🔥 페이지 떠날 때 오디오 정리
+    return () => {
+      stopTts();
+    };
   }, []);
 
   return (
