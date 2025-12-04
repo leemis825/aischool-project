@@ -1,15 +1,19 @@
+// src/pages/PhonePage.tsx
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import Layout from "../components/Layout.js";
 import BackIcon from "../assets/back.png";
 import { requestTts } from "../services/ttsService";
 import { updateComplaintPhone } from "../services/complaintService.js";
+import { playTtsUrl, stopTts } from "../services/audioManager";
 
 export default function PhonePage() {
   const navigate = useNavigate();
   const [digits, setDigits] = useState("");
   const [error, setError] = useState<string | null>(null);
   // 🔊 안내 멘트 한 번만 읽게 하는 플래그
+
+  // 🔊 음성 재생 1회 제한
   const spokenRef = useRef(false);
 
   useEffect(() => {
@@ -22,23 +26,25 @@ export default function PhonePage() {
           "연락 받으실 번호를 입력해 주세요. 숫자를 누르신 뒤에 확인 버튼을 눌러 주세요.";
         const blob = await requestTts(text);
         const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
 
-        audio.onended = () => URL.revokeObjectURL(url);
-        audio.onerror = () => URL.revokeObjectURL(url);
-
-        audio.play();
+        // 🔊 전역 오디오 매니저로 재생
+        playTtsUrl(url);
       } catch (e) {
         console.error("PhonePage TTS 오류:", e);
       }
     };
 
     speak();
+
+    // 🔥 언마운트 시 정리
+    return () => {
+      stopTts();
+    };
   }, []);
 
   const handleNumberClick = (n: string) => {
     setDigits((prev) => {
-      if (prev.length >= 11) return prev; // 01012341234 까지
+      if (prev.length >= 11) return prev;
       return prev + n;
     });
   };
@@ -54,6 +60,7 @@ export default function PhonePage() {
   };
 
   const handleConfirm = async () => {
+    stopTts(); // 🔥 다음 페이지로 넘어가기 전에 음성 정리
     // 번호 입력 끝나고 다음 페이지로 이동 등
     if (digits.length < 10) {
       setError("전화번호를 정확히 입력해 주세요.");
@@ -101,12 +108,8 @@ export default function PhonePage() {
         }}
       >
         {numbers.map((label, idx) => {
-          if (label === "") {
-            // 빈 칸 (10자리 레이아웃 맞추기 위함)
-            return <div key={idx} />;
-          }
+          if (label === "") return <div key={idx} />;
 
-          // 삭제 버튼
           if (label === "←") {
             return (
               <div
@@ -128,16 +131,12 @@ export default function PhonePage() {
                 <img
                   src={BackIcon}
                   alt="back"
-                  style={{
-                    width: "80px",
-                    height: "50px",
-                    pointerEvents: "none",
-                  }}
+                  style={{ width: "80px", height: "50px", pointerEvents: "none" }}
                 />
               </div>
             );
           }
-          // 일반 숫자 버튼 (초록 테두리 원형)
+
           return (
             <button
               key={idx}
@@ -182,8 +181,8 @@ export default function PhonePage() {
             fontWeight: 400,
             fontSize: "55px",
             lineHeight: "70px",
-            textAlign: "left",
             marginBottom: "60px",
+            textAlign: "left",
             textAlignLast: "center",
           }}
         >
@@ -198,7 +197,6 @@ export default function PhonePage() {
             fontWeight: 400,
             fontSize: "50px",
             lineHeight: "61px",
-            textAlign: "left",
             marginBottom: "10px",
             height: "70px",
           }}

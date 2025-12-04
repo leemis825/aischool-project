@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useEffect, useRef } from "react";
 import BubbleLayout from "../components/BubbleLayout.js";
 import { requestTts } from "../services/ttsService";
+import { playTtsUrl, stopTts } from "../services/audioManager";
 
 export default function ResultPage() {
   const navigate = useNavigate();
@@ -35,7 +36,7 @@ export default function ResultPage() {
 
   const detailText = "확인 후 화면 어디든 눌러주세요.";
 
-  // 🔊 처리 안내 + 확인 안내 읽어주기
+  // 🔊 처리 안내 + 확인 안내 읽어주기 (한 번만)
   const spokenRef = useRef(false);
   useEffect(() => {
     if (spokenRef.current) return;
@@ -47,21 +48,25 @@ export default function ResultPage() {
           contentText + " 확인 후 화면 아무 곳이나 눌러 주세요.";
         const blob = await requestTts(text);
         const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
 
-        audio.onended = () => URL.revokeObjectURL(url);
-        audio.onerror = () => URL.revokeObjectURL(url);
-
-        audio.play();
+        // 전역 오디오 매니저로 재생
+        playTtsUrl(url);
       } catch (e) {
         console.error("ResultPage TTS 오류:", e);
       }
     };
 
     speak();
+
+    // 컴포넌트 언마운트 / 라우팅 변경 시 오디오 정리
+    return () => {
+      stopTts();
+    };
   }, [contentText]);
 
   const handleClick = () => {
+    // 페이지 이동 전에 오디오 먼저 정지
+    stopTts();
     navigate("/message", {
       state: { engineResult },
     });
