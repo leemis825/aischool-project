@@ -3,11 +3,12 @@ import { useState, useEffect, useRef } from "react";
 import Layout from "../components/Layout.js";
 import BackIcon from "../assets/back.png";
 import { requestTts } from "../services/ttsService";
+import { updateComplaintPhone } from "../services/complaintService.js";
 
 export default function PhonePage() {
   const navigate = useNavigate();
   const [digits, setDigits] = useState("");
-
+  const [error, setError] = useState<string | null>(null);
   // 🔊 안내 멘트 한 번만 읽게 하는 플래그
   const spokenRef = useRef(false);
 
@@ -52,9 +53,33 @@ export default function PhonePage() {
     return `${value.slice(0, 3)}-${value.slice(3, 7)}-${value.slice(7, 11)}`;
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     // 번호 입력 끝나고 다음 페이지로 이동 등
-    navigate("/success");
+    if (digits.length < 10) {
+      setError("전화번호를 정확히 입력해 주세요.");
+      return;
+    }
+
+    // 🔹 ListeningPage에서 저장해 둔 session_id 꺼내기
+    const sessionId = sessionStorage.getItem("last_session_id");
+
+    if (!sessionId) {
+      console.warn(
+        "⚠️ session_id 없음 - 민원과 전화번호를 연결할 수 없습니다."
+      );
+      // 그래도 흐름은 유지하고 싶으면 그냥 success 로 이동
+      navigate("/success");
+      return;
+    }
+
+    try {
+      await updateComplaintPhone(sessionId, digits);
+      console.log("✅ 전화번호 저장 완료");
+      navigate("/success");
+    } catch (e) {
+      console.error(e);
+      setError("전화번호를 저장하는 중 오류가 발생했어요. 다시 시도해 주세요.");
+    }
   };
 
   const numbers = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "←"];
@@ -188,6 +213,9 @@ export default function PhonePage() {
             marginBottom: "40px",
           }}
         />
+        {error && (
+          <p style={{ color: "red", fontSize: 24, marginTop: 10 }}>{error}</p>
+        )}
 
         <button
           onClick={handleConfirm}

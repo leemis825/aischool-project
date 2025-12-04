@@ -29,7 +29,16 @@ from speaker.stt_whisper import transcribe_bytes
 from brain import minwon_engine  # (다른 곳에서 쓰일 가능성 있어 유지)
 from brain.text_session_state import TextSessionState
 from brain.turn_router import choose_issue_for_followup
-from brain.minwon_engine import run_pipeline_once, decide_stage_and_text, save_engine_log
+from brain.minwon_engine import run_pipeline_once, decide_stage_and_text
+
+
+import db.models
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+from db.session import get_db
+
+
 
 # 🔹 .env 로드 (core.config에서 os.getenv를 쓰기 전에)
 load_dotenv()
@@ -111,6 +120,7 @@ app = FastAPI(
 """,
     version="1.0.0",
 )
+
 
 # CORS: 개발 단계에서는 * 허용, 배포 시에는 도메인 제한 권장
 app.add_middleware(
@@ -546,7 +556,6 @@ async def get_lunar_and_seasonal(today: Optional[date] = None) -> LunarInfo:
 def root():
     return {"message": "간편민원접수 FastAPI 동작 중"}
 
-
 # ============================================================
 # 오늘의 정보 API (날씨 + 절기) - 새 서비스 사용
 # ============================================================
@@ -566,7 +575,15 @@ async def api_today_info(
     """
     return await get_today_info(location)
 
-
+@app.get(
+    "/health-db",
+    summary="DB 헬스 체크",
+    description="Cloud DB(MySQL) 연결 상태를 확인합니다.",
+    tags=["health"],
+)
+def health_db(db: Session = Depends(get_db)):
+    db.execute(text("SELECT 1"))
+    return {"db_status": "ok"}
 # ============================================================
 # 1. 텍스트 민원 세션 생성 (텍스트-only)
 # ============================================================
@@ -1362,6 +1379,19 @@ async def stt_and_minwon_multilang(request: Request):
 #     }
 
 
+from db.base import Base
+from db.session import engine
+from db.models.admin_user import AdminUser 
+# Base.metadata.create_all(bind=engine)
+from fastapi import FastAPI
+from routers import admin_user, user, complaint, complaint_message, admin_dashboard
+
+
+app.include_router(admin_user.router)
+app.include_router(user.router)
+app.include_router(complaint.router)
+app.include_router(complaint_message.router)
+app.include_router(admin_dashboard.router)
 # ============================================================
 # 디버그용: 최종 라우트 목록 출력
 # ============================================================

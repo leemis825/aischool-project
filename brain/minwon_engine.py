@@ -42,20 +42,8 @@ from sqlalchemy.orm import Session
 from .classifier import detect_minwon_type
 from .summarizer import summarize_for_user, summarize_for_staff, build_fallback_summary
 
-from models import EngineLog
 from datetime import datetime
 
-# -------------------- 엔진 로그 저장 --------------------
-def save_engine_log(db: Session, session_id: str, stage: str, request_text: str, response: dict):
-    log = EngineLog(
-        session_id=session_id,
-        stage=stage,
-        request_text=request_text,
-        response_json=response,
-        created_at=datetime.utcnow(),
-    )
-    db.add(log)
-    db.commit()
 
 # 멀티턴용 확인/부정 단어
 CONFIRM_WORDS = ["네", "예", "맞아요", "맞습니다", "응", "그래요", "그렇습니다"]
