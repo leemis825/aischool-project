@@ -1,120 +1,143 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from pydantic import BaseModel
-from typing import Optional
-from typing import Literal
+# routers/complaint.py
+# -*- coding: utf-8 -*-
 
-from db.session import get_db
-from db.models.complaint import Complaint
-from db.models.user import User
-from db.models.complaint_message import ComplaintMessage  # 🔹 메시지용 모델 import
-from routers.admin_user import get_current_admin, AdminUser
-from db.models.complaint_message import ComplaintMessage
+"""
+민원 저장/조회/업데이트 라우터
+
+- /complaints/create
+    STT+민원엔진 결과를 session_id 기준으로 upsert
+    (로컬 NO_DB_MODE 에서는 DB 저장 없이 OK 반환)
+
+- /complaints/{session_id}
+    특정 세션의 민원 및 대화 메시지 조회
+"""
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import Optional, List, Dict, Any
 
-class ComplaintCreate(BaseModel):
-    # 🔹 키오스크면 대부분 None, 웹 로그인 붙이면 user_id 채워서 보내면 됨
-    user_id: Optional[int] = None
-
-    # 🔹 민원 세션 (STT에서 받은 session_id)
-    session_id: str
-
-    # Complaint(민원 헤더)에 들어갈 정보들
-    title: Optional[str] = None
-    raw_text: Optional[str] = None
-    category: Optional[str] = None
-
-    minwon_type: Optional[str] = None
-    handling_type: Optional[str] = None
-    risk_level: Optional[str] = None
-    needs_visit: Optional[bool] = None
-    citizen_request: Optional[str] = None
-    summary: Optional[str] = None
-    location: Optional[str] = None
-
-    # 🔹 이번 턴 대화 내용 (ComplaintMessage 용)
-    stt_text: Optional[str] = None        # 시민이 이번에 말한 문장
-    bot_answer: Optional[str] = None      # 봇이 안내한 문장
-    audio_url: Optional[str] = None       # 원본 음성 파일 경로/URL (있으면)
-    tts_audio_url: Optional[str] = None   # TTS 음성 파일 경로/URL (있으면)
-
-class ComplaintPhoneUpdate(BaseModel):
-    session_id: str
-    phone_number: str
-
-class ComplaintReplyCreate(BaseModel):
-    content: str
-
-
-class ComplaintStatusUpdate(BaseModel):
-    status: Literal["new", "in_progress", "resolved"]
-
+from db.session import get_db, USE_DB
+from db.models.complaint import Complaint
+from db.models.complaint_message import ComplaintMessage
+from pydantic import BaseModel, Field
 
 
 router = APIRouter(prefix="/complaints", tags=["complaints"])
 
 
+# ---------------------------------------------------------
+# Pydantic 입력 스키마
+# ---------------------------------------------------------
 
-# 🔄 민원 생성/업데이트 (session_id 기준 upsert + 대화 로그 저장)
+class ComplaintCreate(BaseModel):
+    session_id: str = Field(..., description="민원 세션 ID")
+    user_id: Optional[str] = Field(None, description="사용자/장비 ID")
+    title: Optional[str] = None
+    raw_text: Optional[str] = None
+    summary: Optional[str] = None
+
+    category: Optional[str] = None          # staff_payload.category
+    minwon_type: Optional[str] = None
+    handling_type: Optional[str] = None
+
+    risk_level: Optional[str] = None
+    needs_visit: Optional[bool] = None
+    citizen_request: Optional[str] = None
+    location: Optional[str] = None
+
+    engine_result: Optional[Dict[str, Any]] = None  # (프론트 저장용)
+
+
+class ComplaintMessageCreate(BaseModel):
+    session_id: str
+    sender: str               # "user" | "agent"
+    text: str                 # 원문 STT 결과 또는 LLM 답변
+    stage: Optional[str] = "" # classification | guide | handoff | clarification
+
+
+# ---------------------------------------------------------
+# 1) 민원 저장 (session_id 기준 upsert)
+# ---------------------------------------------------------
+
 @router.post("/create")
 def create_or_update_complaint(
     payload: ComplaintCreate,
     db: Session = Depends(get_db),
 ):
     """
-    - 같은 session_id 로 호출되면 같은 Complaint 에 붙음
-    - 처음 보는 session_id 면 Complaint 를 새로 생성
-    - 매 호출마다 ComplaintMessage(대화 로그)를 남김
+    STT+민원엔진 결과를 DB에 저장하거나(No DB 모드면 패스)
+    session_id 기준으로 1건 유지 (upsert).
     """
+    # -------------------------------------------
+    # 🔥 NO_DB_MODE: 로컬/테스트에서는 DB 저장 없이 통과
+    # -------------------------------------------
+    if not USE_DB:
+        print("\n[NO_DB_MODE] /complaints/create received payload:")
+        print(payload.dict())
+        return {
+            "status": "ok",
+            "id": None,
+            "mode": "no_db",
+            "session_id": payload.session_id,
+        }
 
-    # 1) session_id 로 기존 민원 조회
+    # -------------------------------------------
+    # 🔥 실제 DB 저장 로직
+    # -------------------------------------------
+
+    # 기존 민원 조회 (세션 기준)
     complaint = (
         db.query(Complaint)
         .filter(Complaint.session_id == payload.session_id)
         .first()
     )
 
-    # 2) 없으면 새 민원 생성
+    # 신규 생성
     if complaint is None:
         complaint = Complaint(
             user_id=payload.user_id,
             session_id=payload.session_id,
             title=payload.title,
             raw_text=payload.raw_text,
+            summary=payload.summary,
+
             category=payload.category or payload.minwon_type,
             minwon_type=payload.minwon_type,
             handling_type=payload.handling_type,
             risk_level=payload.risk_level,
+
             needs_visit=payload.needs_visit if payload.needs_visit is not None else False,
             citizen_request=payload.citizen_request,
-            summary=payload.summary,
             location=payload.location,
         )
         db.add(complaint)
-        db.flush()  # complaint.id 확보
-    
+        db.flush()  # id 생성
 
-    # 3) 이번 턴 대화 로그 저장 (user / bot)
-    if payload.stt_text:
-        user_msg = ComplaintMessage(
-            complaint_id=complaint.id,
-            role="user",
-            content=payload.stt_text,   # ⬅️ stt_text → content
-            audio_url=payload.audio_url,
-        )
-        db.add(user_msg)
+    # 기존 민원 업데이트 (upsert)
+    else:
+        if payload.title:
+            complaint.title = payload.title
+        if payload.raw_text:
+            complaint.raw_text = payload.raw_text
+        if payload.summary:
+            complaint.summary = payload.summary
+        if payload.category:
+            complaint.category = payload.category
+        if payload.minwon_type:
+            complaint.minwon_type = payload.minwon_type
+        if payload.handling_type:
+            complaint.handling_type = payload.handling_type
+        if payload.risk_level:
+            complaint.risk_level = payload.risk_level
 
-    if payload.bot_answer:
-        bot_msg = ComplaintMessage(
-            complaint_id=complaint.id,
-            role="bot",
-            content=payload.bot_answer,  # ⬅️ bot_answer → content
-            tts_audio_url=payload.tts_audio_url,
-        )
-        db.add(bot_msg)
+        # needs_visit은 명시적으로 전달되면 업데이트
+        if payload.needs_visit is not None:
+            complaint.needs_visit = payload.needs_visit
 
+        if payload.citizen_request:
+            complaint.citizen_request = payload.citizen_request
+        if payload.location:
+            complaint.location = payload.location
 
     db.commit()
     db.refresh(complaint)
@@ -123,238 +146,64 @@ def create_or_update_complaint(
         "status": "ok",
         "id": complaint.id,
         "session_id": complaint.session_id,
+        "mode": "db",
     }
 
 
-@router.post("/set-phone")
-def set_complaint_phone(
-    payload: ComplaintPhoneUpdate,
+# ---------------------------------------------------------
+# 2) 민원 메시지 저장
+# ---------------------------------------------------------
+
+@router.post("/message")
+def create_message(
+    payload: ComplaintMessageCreate,
     db: Session = Depends(get_db),
 ):
-    """
-    - 키오스크에서 전화번호 입력 후 호출
-    - session_id 로 해당 Complaint 를 찾아 phone_number 업데이트
-    """
+    if not USE_DB:
+        print("\n[NO_DB_MODE] /complaints/message received payload:")
+        print(payload.dict())
+        return {"status": "ok", "id": None, "mode": "no_db"}
+
+    message = ComplaintMessage(
+        session_id=payload.session_id,
+        sender=payload.sender,
+        text=payload.text,
+        stage=payload.stage,
+    )
+
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+
+    return {"status": "ok", "id": message.id}
+
+
+# ---------------------------------------------------------
+# 3) 특정 세션의 모든 민원 및 메시지 조회
+# ---------------------------------------------------------
+
+@router.get("/{session_id}")
+def get_complaint(session_id: str, db: Session = Depends(get_db)):
+    if not USE_DB:
+        return {"status": "no_db", "session_id": session_id, "detail": "NO_DB_MODE enabled"}
+
     complaint = (
         db.query(Complaint)
-        .filter(Complaint.session_id == payload.session_id)
+        .filter(Complaint.session_id == session_id)
         .first()
     )
-
-    if complaint is None:
-        raise HTTPException(status_code=404, detail="Complaint not found")
-
-    complaint.phone_number = payload.phone_number
-    db.commit()
-    db.refresh(complaint)
-
-    return {"status": "ok", "id": complaint.id}
-
-# 민원 단건 조회
-@router.get("/{complaint_id}")
-def get_complaint(
-    complaint_id: int,
-    current_admin: AdminUser = Depends(get_current_admin),
-    db: Session = Depends(get_db),
-):
-    return (
-        db.query(Complaint)
-        .filter(Complaint.id == complaint_id)
-        .first()
-    )
-
-
-# 특정 유저의 민원 목록
-@router.get("/user/{user_id}")
-def get_user_complaints(
-    user_id: int,
-    current_admin: AdminUser = Depends(get_current_admin),
-    db: Session = Depends(get_db),
-):
-    return db.query(Complaint).filter(Complaint.user_id == user_id).all()
-
-
-# 📌 민원 목록 (페이지네이션)
-@router.get("/")
-def list_complaints(
-    page: int = 1,
-    page_size: int = 10,
-    current_admin: AdminUser = Depends(get_current_admin),
-    db: Session = Depends(get_db),
-):
-    # 전체 개수
-    total = db.query(func.count(Complaint.id)).scalar() or 0
-
-    # 페이지에 해당하는 row들
-    offset = (page - 1) * page_size
-
-    rows = (
-        db.query(
-            Complaint.id,
-            Complaint.title,
-            Complaint.category,
-            Complaint.created_at,
-            Complaint.status,
-            Complaint.phone_number,
-            Complaint.risk_level
-        )
-        .outerjoin(User, Complaint.user_id == User.id)  # 🔹 user_id가 NULL인 민원도 포함
-        .order_by(Complaint.created_at.desc())
-        .offset(offset)
-        .limit(page_size)
-        .all()
-    )
-
-    items = [
-        {
-            "id": r.id,
-            "title": r.title,
-            "category": r.category,
-            "created_at": r.created_at,
-            "status": getattr(r, "status", "new"), 
-            "location": getattr(r, "location", None),
-            "phone_number": r.phone_number,
-            "risk_level": r.risk_level,
-
-        }
-        for r in rows
-    ]
-
-    return {
-        "items": items,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-    }
-
-@router.post("/{complaint_id}/read")
-def mark_complaint_as_read(
-    complaint_id: int,
-    db: Session = Depends(get_db),
-    current_admin: AdminUser = Depends(get_current_admin),
-):
-    complaint = db.query(Complaint).filter(Complaint.id == complaint_id).first()
-
     if not complaint:
-        return {"status": "error", "message": "Complaint not found"}
-
-    # 🔹 new → read 로 변경
-    if complaint.status == "new":
-        complaint.status = "read"
-
-    db.commit()
-    return {"status": "ok", "id": complaint_id, "updated_status": complaint.status}
-
-
-@router.get("/detail/{complaint_id}")
-def get_complaint_detail(
-    complaint_id: int,
-    current_admin: AdminUser = Depends(get_current_admin),
-    db: Session = Depends(get_db),
-):
-    # 1) 민원 본문 조회
-    complaint = (
-        db.query(Complaint)
-        .filter(Complaint.id == complaint_id)
-        .first()
-    )
-    if complaint is None:
         raise HTTPException(status_code=404, detail="Complaint not found")
 
-    # 2) 관련 메시지(대화 로그) 조회 - 시간순
     messages = (
         db.query(ComplaintMessage)
-        .filter(ComplaintMessage.complaint_id == complaint_id)
-        .order_by(ComplaintMessage.created_at.asc())
+        .filter(ComplaintMessage.session_id == session_id)
+        .order_by(ComplaintMessage.id.asc())
         .all()
     )
-
-    complaint_dict = {
-        "id": complaint.id,
-        "session_id": getattr(complaint, "session_id", None),
-        "title": complaint.title,
-        "raw_text": getattr(complaint, "raw_text", None),
-        "summary": getattr(complaint, "summary", None),
-        "category": complaint.category,
-        "minwon_type": getattr(complaint, "minwon_type", None),
-        "handling_type": getattr(complaint, "handling_type", None),
-        "risk_level": getattr(complaint, "risk_level", None),
-        "needs_visit": getattr(complaint, "needs_visit", None),
-        "citizen_request": getattr(complaint, "citizen_request", None),
-        "location": getattr(complaint, "location", None),
-        "phone_number": getattr(complaint, "phone_number", None),
-        "status": getattr(complaint, "status", None),
-        "created_at": complaint.created_at,
-        "updated_at": getattr(complaint, "updated_at", None),
-        "resolved_at": getattr(complaint, "resolved_at", None),
-    }
-
-    messages_list = [
-        {
-            "id": m.id,
-            "role": m.role,            
-            "content": m.content,
-            "audio_url": m.audio_url,
-            "tts_audio_url": m.tts_audio_url,
-            "created_at": m.created_at,
-        }
-        for m in messages
-    ]
-
-    return {
-        "complaint": complaint_dict,
-        "messages": messages_list,
-    }
-
-@router.post("/{complaint_id}/reply")
-def add_admin_reply(
-    complaint_id: int,
-    payload: ComplaintReplyCreate,
-    current_admin: AdminUser = Depends(get_current_admin),
-    db: Session = Depends(get_db),
-):
-    complaint = (
-        db.query(Complaint)
-        .filter(Complaint.id == complaint_id)
-        .first()
-    )
-    if complaint is None:
-        raise HTTPException(status_code=404, detail="Complaint not found")
-
-    msg = ComplaintMessage(
-        complaint_id=complaint.id,
-        role="admin",
-        content=payload.content,   # ✅ 관리자 답변도 content에
-    )
-    db.add(msg)
-
-    db.commit()
-    db.refresh(msg)
-
-    return {"status": "ok", "message_id": msg.id}
-
-
-@router.post("/{complaint_id}/status")
-def update_complaint_status(
-    complaint_id: int,
-    payload: ComplaintStatusUpdate,
-    current_admin: AdminUser = Depends(get_current_admin),
-    db: Session = Depends(get_db),
-):
-    complaint = (
-        db.query(Complaint)
-        .filter(Complaint.id == complaint_id)
-        .first()
-    )
-    if complaint is None:
-        raise HTTPException(status_code=404, detail="Complaint not found")
-
-    complaint.status = payload.status
-    db.commit()
-    db.refresh(complaint)
 
     return {
         "status": "ok",
-        "complaint_id": complaint.id,
-        "new_status": complaint.status,
+        "complaint": complaint,
+        "messages": messages,
     }

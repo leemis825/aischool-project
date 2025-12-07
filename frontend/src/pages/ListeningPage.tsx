@@ -19,6 +19,11 @@ export default function ListeningPage() {
   const [sessionId, setSessionId] = useState<string | null>(null); // 🔹 백엔드 세션 ID
   const sessionIdRef = useRef<string | null>(null);
 
+  // 🔹 추가 질문(clarification) 모드 여부
+  const [clarificationMode, setClarificationMode] = useState(false);
+  // 🔹 한 번이라도 clarification이 발생했는지 (이후엔 안내 문구 완전 숨김)
+  const [hasClarificationStarted, setHasClarificationStarted] = useState(false);
+
   // 🔹 StrictMode에서 useEffect 두 번 실행되는 것 방지용
   const hasInitRef = useRef(false);
 
@@ -33,7 +38,7 @@ export default function ListeningPage() {
   const animationFrameRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null); // 현재는 안 쓰지만 남겨둠(확장용)
 
-  // 🔹 안내 멘트(Audio) ref (여기가 새로 추가된 핵심)
+  // 🔹 안내 멘트(Audio) ref
   const introAudioRef = useRef<HTMLAudioElement | null>(null);
   const introAudioUrlRef = useRef<string | null>(null);
 
@@ -317,6 +322,7 @@ export default function ListeningPage() {
         );
         // 여기서는 그냥 무시하고 기존 sessionIdRef.current를 계속 사용
       }
+
       try {
         await saveComplaintFromStt(result, null);
       } catch (err) {
@@ -324,12 +330,15 @@ export default function ListeningPage() {
         // 굳이 사용자에게 에러 표시 안 하고, 흐름만 이어가도 됨
       }
 
-      await callTTS(
-        result.user_facing?.main_message ??
-          "말씀해 주셔서 감사합니다. 잠시만 기다려 주세요."
-      );
-
       const stage = result.engine_result?.stage;
+
+      // 🔹 stage 기반으로 clarification 모드/시작 여부 설정
+      if (stage === "clarification") {
+        setClarificationMode(true);
+        setHasClarificationStarted(true); // 🔥 이 시점 이후로는 안내 문구 숨김
+      } else {
+        setClarificationMode(false);
+      }
 
       if (stage === "clarification") {
         console.log("🔁 clarification 단계 – 위치 추가 질문 후 다시 녹음");
@@ -420,15 +429,21 @@ export default function ListeningPage() {
             transition: "transform 0.05s linear",
             transform:
               isRecording && !isUploading
-                ? `scale(${1 + Math.sin(volume * 10) * 0.2})` // 🔊 녹음 중에만 꿈틀
-                : "scale(1)", // 🔇 아니면 고정
+                ? `scale(${1 + Math.sin(volume * 10) * 0.2})`
+                : "scale(1)",
           }}
         />
 
         {error && <p style={{ color: "red" }}>{error}</p>}
-        {isRecording && !isUploading && !error && (
-          <h2>말씀이 끝나면 화면 어디든 눌러주세요</h2>
-        )}
+
+        {/* 🔹 한 번이라도 clarification이 시작되면 이후에는 이 안내 문구를 완전히 숨김 */}
+        {isRecording &&
+          !isUploading &&
+          !error &&
+          !hasClarificationStarted && (
+            <h2>말씀이 끝나면 화면 어디든 눌러주세요</h2>
+          )}
+
         {isUploading && <h2>인식 중입니다. 잠시만 기다려 주세요...</h2>}
         {sttResult && !isUploading}
 
