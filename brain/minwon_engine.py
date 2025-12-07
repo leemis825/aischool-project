@@ -1,21 +1,25 @@
 # -*- coding: utf-8 -*-
 """
 민원 텍스트 엔진 — 최종 완성본
-Clarification 1회만 / 추가 위치 정보 자동 인식 / 주소 처리 고도화
 """
 
 import re
-import json
 from typing import Any, Dict, List, Tuple
 
-from brain.utils_text import normalize, extract_keywords, is_critical, split_additional_location
+from brain.utils_text import (
+    normalize,
+    extract_keywords,
+    is_critical,
+    split_additional_location,
+)
 from brain.rules_pension import build_pension_message
 from .classifier import detect_minwon_type
 from .summarizer import summarize_for_user, summarize_for_staff, build_fallback_summary
 from .clarification_agent import decide_clarification_with_llm
 
-
-# 민원 엔진이 구분해야 하는 Home-like 위치 표현
+# ------------------------------
+# 기본 패턴 / 기본 위치
+# ------------------------------
 HOME_LIKE_PATTERN = (
     r"(우리집|집앞|집 앞|우리집 앞|집앞골목|집앞 골목|우리동네|우리 동네|동네|근처|이 근처|주변|인근)"
 )
@@ -24,13 +28,13 @@ PLACEHOLDER_LOCATIONS = ("명시되지 않음", "미상", "알 수 없음")
 
 DEFAULT_LOCATION = "동곡리 158번지 너와나 마을회관"
 
-
-# -------------------------------------------------------------
-# 1) 1차 규칙 기반 분류
-# -------------------------------------------------------------
+# =============================================================================
+# 1) 규칙 기반 1차 분류
+# =============================================================================
 def rule_first_classify(text: str) -> Tuple[str, bool]:
     t = normalize(text)
 
+    # 위험 키워드 → 무조건 현장 방문
     danger_keywords = ["쓰러졌", "불났", "폭발", "전선", "감전", "피가", "폭행", "위협", "죽고 싶"]
     if any(k in t for k in danger_keywords):
         return "도로", True
@@ -47,11 +51,10 @@ def rule_first_classify(text: str) -> Tuple[str, bool]:
     return c, needs_visit_map.get(c, False)
 
 
-# -------------------------------------------------------------
-# 2) Clarification 필요 여부(규칙 기반)
-# -------------------------------------------------------------
+# =============================================================================
+# 2) Clarification 필요 여부 판단(규칙 기반)
+# =============================================================================
 def need_clarification(summary: Dict[str, Any], category: str, text: str, needs_visit_flag: bool) -> bool:
-    """도로/시설물 + 방문 필요인데 위치가 모호하면 질문"""
     needs_visit = bool(summary.get("needs_visit") or needs_visit_flag)
     if not needs_visit:
         return False
@@ -62,7 +65,6 @@ def need_clarification(summary: Dict[str, Any], category: str, text: str, needs_
     t = normalize(text)
     t_no_space = t.replace(" ", "")
 
-    # 이미 "추가 위치 정보" 포함 → 무조건 재질문 X
     if "추가위치정보" in t_no_space:
         return False
 
@@ -89,16 +91,16 @@ def need_clarification(summary: Dict[str, Any], category: str, text: str, needs_
     return False
 
 
-# -------------------------------------------------------------
+# =============================================================================
 # 3) Clarification 응답 생성
-# -------------------------------------------------------------
+# =============================================================================
 def build_clarification_response(text: str, category: str, needs_visit: bool, risk_level: str) -> Dict[str, Any]:
     uf = {
         "short_title": "추가 정보 확인",
         "main_message": "죄송하지만, 정확한 위치를 한 번만 더 알려 주시면 좋겠습니다.",
         "next_action_guide": "예를 들어 ○○동 ○○아파트 앞, ○○리 마을회관 앞 골목처럼 말씀해 주세요.",
         "phone_suggestion": "",
-        "confirm_question": "지금 화면에 보이는 내용이 맞다면 '결과 확인' 버튼을 눌러 주세요.",
+        "confirm_question": "",
         "tts_listening": "죄송하지만, 정확한 위치를 한 번만 더 알려 주시면 좋겠습니다.",
         "tts_summary": "죄송하지만, 정확한 위치를 한 번만 더 알려 주시면 좋겠습니다.",
         "tts_result": "",
@@ -129,9 +131,37 @@ def build_clarification_response(text: str, category: str, needs_visit: bool, ri
     }
 
 
-# -------------------------------------------------------------
-# 4) 본 엔진 — run_pipeline_once
-# -------------------------------------------------------------
+# =============================================================================
+# 4) 위치 텍스트 정제(clean)
+# =============================================================================
+def clean_location_for_user(raw: str) -> str:
+    if not raw:
+        return ""
+
+    txt = raw.strip()
+
+    # 첫 문장만 추출(?,! 등 기준)
+    for sep in ["\n", "!", "?"]:
+        if sep in txt:
+            parts = [p.strip() for p in txt.split(sep) if p.strip()]
+            if parts:
+                txt = parts[-1]
+                break
+
+    txt = re.sub(r"^(아|어|그|저기|거기)\s*[,\s]+", "", txt)
+    # '입니다', '이에요' 등 + 그 뒤에 조사 1~2글자까지 제거
+    txt = re.sub(r"(입니다|이에요|에요|예요|이요)([^\w\s])?", "", txt).strip()
+    txt = re.sub(r"(입니다|이에요|에요|예요|이요)(에|에서|으로|로|를|을)?", "", txt).strip()
+
+    txt = txt.rstrip(".,").strip()
+    txt = re.sub(r"\s+", " ", txt)
+
+    return txt
+
+
+# =============================================================================
+# 5) 본 엔진
+# =============================================================================
 def run_pipeline_once(text: str, history: List[Dict[str, str]]) -> Dict[str, Any]:
     original = text.strip()
     if not original:
@@ -145,6 +175,9 @@ def run_pipeline_once(text: str, history: List[Dict[str, str]]) -> Dict[str, Any
             "staff_payload": {},
         }
 
+    # -------------------------------------------------
+    # 1) 분류 + handling 기본값
+    # -------------------------------------------------
     category, needs_visit = rule_first_classify(original)
 
     handling = {
@@ -164,20 +197,37 @@ def run_pipeline_once(text: str, history: List[Dict[str, str]]) -> Dict[str, Any
     elif category in ("연금/복지", "심리지원"):
         handling["need_call_transfer"] = True
 
+    # -------------------------------------------------
+    # 2) 담당자용 요약 생성
+    # -------------------------------------------------
     staff = summarize_for_staff(original, category, handling)
 
     analysis_text, additional_location = split_additional_location(original)
     already_history = bool(history)
 
     # -------------------------------------------------
-    # 주소 기본값 주입 (도로/시설 제외)
+    # 3) 1턴 시설물/도로 + 위치 없음 → 무조건 Clarification
     # -------------------------------------------------
-    if not already_history and category not in ("도로", "시설물"):
-        if not (staff.get("location") or "").strip():
-            staff["location"] = DEFAULT_LOCATION
+    if (
+        not already_history
+        and category in ("도로", "시설물")
+        and not additional_location
+        and not (staff.get("location") or "").strip()
+    ):
+        t_norm = normalize(original)
+        has_loc_word = bool(
+            re.search(
+                r"(동\s|\d+동\b|리\s|\d+리\b|길|로|아파트|빌라|마을회관|시장|버스정류장|정류장|역|학교|병원|공원)",
+                t_norm,
+            )
+        )
+        if not has_loc_word:
+            final_needs_visit = True
+            risk = "긴급" if is_critical(original) else "보통"
+            return build_clarification_response(original, category, final_needs_visit, risk)
 
     # -------------------------------------------------
-    # 추가 위치 정보 처리 (추가 위치 정보: ...)
+    # 4) 추가 위치 정보 반영
     # -------------------------------------------------
     final_needs_visit = bool(staff.get("needs_visit") or needs_visit)
     risk = handling["risk_level"]
@@ -199,18 +249,27 @@ def run_pipeline_once(text: str, history: List[Dict[str, str]]) -> Dict[str, Any
             staff["memo_for_staff"] = memo + (" / " if memo else "") + add
 
     # -------------------------------------------------
-    # Clarification 판단 (추가 위치 정보 턴이면 무조건 스킵)
+    # 5) Clarification 판단 (⚠️ 들여쓰기 & 조건 완전 수정됨)
     # -------------------------------------------------
     need_clar = False
     clar_reason = ""
     clar_target = "location"
 
     if not already_history:
-        t_norm = normalize(analysis_text)
-        t_no_space = t_norm.replace(" ", "")
+        orig_norm = normalize(original)
+        orig_no_space = orig_norm.replace(" ", "")
 
-        if "추가위치정보" not in t_no_space:
-            rule_flag = need_clarification(staff, category, analysis_text, final_needs_visit)
+        is_additional_loc_turn = (
+            "추가위치정보" in orig_no_space 
+            or (additional_location and additional_location.strip() != "")
+        )
+
+        has_confident_location = bool(staff.get("location"))
+
+        if (not is_additional_loc_turn) and (not has_confident_location):
+            rule_flag = need_clarification(
+                staff, category, analysis_text, final_needs_visit
+            )
 
             handling_info = {
                 "handling_type": handling["handling_type"],
@@ -234,50 +293,81 @@ def run_pipeline_once(text: str, history: List[Dict[str, str]]) -> Dict[str, Any
             need_clar = rule_flag or llm_flag
 
     if need_clar:
-        resp = build_clarification_response(analysis_text, category, final_needs_visit, risk)
+        resp = build_clarification_response(original, category, final_needs_visit, risk)
         memo = resp["staff_payload"].get("memo_for_staff") or ""
         if clar_reason:
-            memo = memo + (" / " if memo else "") + f"LLM 판단 사유: {clar_reason}"
+            memo += (" / " if memo else "") + f"LLM 판단 사유: {clar_reason}"
         resp["staff_payload"]["memo_for_staff"] = memo
         resp["staff_payload"]["clarification_target"] = clar_target
         return resp
 
     # -------------------------------------------------
-    # 방문 필요한데 주소 여전히 없으면 fallback
+    # 6) 위치 기본값 보정
     # -------------------------------------------------
     if final_needs_visit and not (staff.get("location") or "").strip():
         staff["location"] = DEFAULT_LOCATION
 
     # -------------------------------------------------
-    # 최종 user-facing 구성
+    # 7) Summary / Result 텍스트 생성
     # -------------------------------------------------
-    empathy = "말씀해 주셔서 감사합니다. 많이 불편하셨겠습니다. "
-    extra_pension = ""
+    raw_location = staff.get("location", "")
+    cleaned_location = clean_location_for_user(raw_location)
 
-    if category == "연금/복지":
-        msg = build_pension_message(original)
-        if msg:
-            extra_pension = " " + msg
-
-    if handling["handling_type"] == "simple_guide":
-        next_step = summarize_for_user(original, category, handling)
-        main_msg = f"{empathy}{category} 관련 안내로 처리됩니다.{extra_pension}"
-    elif handling["handling_type"] == "contact_only":
-        next_step = summarize_for_user(original, category, handling)
-        main_msg = f"{empathy}{category} 관련 상담이 필요해 보입니다.{extra_pension}"
+    if cleaned_location:
+        summary_text = f"{cleaned_location} {category} 고장"
     else:
-        next_step = "담당 부서에서 현장을 확인한 뒤, 필요한 조치를 진행할 예정입니다."
-        main_msg = f"{empathy}{category} 관련 민원으로 접수하겠습니다."
+        summary_text = f"{category} 관련 민원"
 
+    if cleaned_location:
+        summary_tts = (
+            f"말씀해 주신 내용은 {cleaned_location}에 있는 {category} 문제가 맞으실까요? "
+        )
+    else:
+        summary_tts = (
+            f"말씀해 주신 내용은 {category} 관련 민원이 맞으실까요? "
+        )
+
+    empathy = "말씀해 주셔서 감사합니다. 많이 불편하셨겠습니다. "
+
+    if handling["handling_type"] == "official_ticket":
+        result_text = "담당 부서에서 현장을 확인해 조치할 예정입니다."
+
+        if cleaned_location:
+            result_tts = (
+                f"{empathy}{cleaned_location}에 있는 {category} 문제는 "
+                "담당 부서에서 현장을 확인해 조치할 예정입니다. "
+                "확인 후 화면 아무 곳이나 눌러 주세요."
+            )
+        else:
+            result_tts = (
+                f"{empathy}{category} 관련 민원은 "
+                "담당 부서에서 내용을 확인해 조치할 예정입니다. "
+                "확인 후 화면 아무 곳이나 눌러 주세요."
+            )
+    else:
+        guide_text = summarize_for_user(original, category, handling)
+        result_text = guide_text
+        result_tts = (
+            f"{empathy}{guide_text} "
+            "확인 후 화면 아무 곳이나 눌러 주세요."
+        )
+
+    # -------------------------------------------------
+    # 8) user_facing / staff_payload 구성
+    # -------------------------------------------------
     user_facing = {
         "short_title": f"{category} 관련 문의",
-        "main_message": main_msg,
-        "next_action_guide": next_step,
-        "phone_suggestion": "" if handling["handling_type"] != "contact_only" else "",
-        "confirm_question": "지금 화면에 보이는 내용이 맞으시면 '결과 확인' 버튼을 눌러 주세요.",
-        "tts_listening": main_msg + " " + next_step,
-        "tts_summary": main_msg,
-        "tts_result": next_step,
+        "summary_text": summary_text,
+        "summary_tts": summary_tts,
+        "result_text": result_text,
+        "result_tts": result_tts,
+        "main_message": empathy + f"{category} 관련 민원으로 접수하겠습니다.",
+        "next_action_guide": result_text,
+        "phone_suggestion": "",
+        "confirm_question": "요약 내용이 맞으시면 예 버튼을 눌러 주세요.",
+        "tts_listening": summary_tts,
+        "tts_summary": summary_tts,
+        "tts_result": result_tts,
         "answer_core": f"{category} 관련 문의 요약 안내입니다.",
     }
 
@@ -304,14 +394,10 @@ def run_pipeline_once(text: str, history: List[Dict[str, str]]) -> Dict[str, Any
         "user_facing": user_facing,
         "staff_payload": staff_payload,
     }
-# -------------------------------------------------
-# 기존 코드 호환용 헬퍼 (옛 코드에서 사용)
-# -------------------------------------------------
-from typing import Dict as _Dict, Any as _Any, List as _List
 
-def decide_stage_and_text(text: str, history: _List[_Dict[str, str]]) -> _Dict[str, _Any]:
-    """
-    기존 코드에서 사용하던 헬퍼 함수.
-    내부적으로 run_pipeline_once를 그대로 호출한다.
-    """
+
+# =============================================================================
+# 6) 기존 코드 호환용
+# =============================================================================
+def decide_stage_and_text(text: str, history: List[Dict[str, str]]) -> Dict[str, Any]:
     return run_pipeline_once(text, history)

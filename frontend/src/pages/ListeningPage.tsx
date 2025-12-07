@@ -403,56 +403,55 @@ export default function ListeningPage() {
   };
 
   return (
-    <Layout
-      title="민원접수"
-      content="말씀을 듣고 있어요"
-      topImage="src/assets/top2.png"
-      onClick={handleClick}
+  <Layout
+    title="민원접수"
+    content="말씀을 듣고 있어요"
+    topImage="src/assets/top2.png"
+    onClick={handleClick}
+  >
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        flexDirection: "column",
+        marginTop: "25px",
+      }}
     >
-      <div
+      <img
+        src={SpeakerImg}
+        alt="speaker"
         style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          flexDirection: "column",
-          marginTop: "25px",
+          width: "230px",
+          height: "230px",
+          marginTop: "-50px",
+          marginBottom: "20px",
+          transition: "transform 0.05s linear",
+          transform:
+            isRecording && !isUploading
+              ? `scale(${1 + Math.sin(volume * 10) * 0.2})`
+              : "scale(1)",
         }}
-      >
-        <img
-          src={SpeakerImg}
-          alt="speaker"
-          style={{
-            width: "230px",
-            height: "230px",
-            marginTop: "-50px",
-            marginBottom: "20px",
-            transition: "transform 0.05s linear",
-            transform:
-              isRecording && !isUploading
-                ? `scale(${1 + Math.sin(volume * 10) * 0.2})`
-                : "scale(1)",
-          }}
-        />
+      />
 
-        {error && <p style={{ color: "red" }}>{error}</p>}
+      {error && <p style={{ color: "red" }}>{error}</p>}
 
-        {/* 🔹 한 번이라도 clarification이 시작되면 이후에는 이 안내 문구를 완전히 숨김 */}
-        {isRecording &&
-          !isUploading &&
-          !error &&
-          !hasClarificationStarted && (
-            <h2>말씀이 끝나면 화면 어디든 눌러주세요</h2>
-          )}
-
-        {isUploading && <h2>인식 중입니다. 잠시만 기다려 주세요...</h2>}
-        {sttResult && !isUploading}
-
-        {ttsUrl && !isUploading && (
-          <div style={{ marginTop: 16 }}>
-            <audio src={ttsUrl} controls autoPlay />
-          </div>
+      {/* 🔹 한 번이라도 clarification이 시작되면 이후에는 이 안내 문구를 완전히 숨김 */}
+      {isRecording &&
+        !isUploading &&
+        !error &&
+        !hasClarificationStarted && (
+          <h2>말씀이 끝나면 화면 어디든 눌러주세요</h2>
         )}
-      </div>
-    </Layout>
-  );
+
+      {isUploading && <h2>인식 중입니다. 잠시만 기다려 주세요...</h2>}
+      {sttResult && !isUploading}
+
+      {/* 🔥 TTS 플레이어는 화면에 안 보이게 숨김 */}
+      {ttsUrl && !isUploading && (
+        <audio src={ttsUrl} autoPlay style={{ display: "none" }} />
+      )}
+    </div>
+  </Layout>
+);
 }

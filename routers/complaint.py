@@ -67,6 +67,9 @@ def create_or_update_complaint(
     """
     STT+민원엔진 결과를 DB에 저장하거나(No DB 모드면 패스)
     session_id 기준으로 1건 유지 (upsert).
+
+    ❗ 중요: DB 오류가 나더라도 500으로 터뜨리지 않고
+           항상 200 안에 status / mode 로 결과를 돌려준다.
     """
     # -------------------------------------------
     # 🔥 NO_DB_MODE: 로컬/테스트에서는 DB 저장 없이 통과
@@ -82,72 +85,85 @@ def create_or_update_complaint(
         }
 
     # -------------------------------------------
-    # 🔥 실제 DB 저장 로직
+    # 🔥 실제 DB 저장 로직 (예외는 잡아서 200으로 응답)
     # -------------------------------------------
-
-    # 기존 민원 조회 (세션 기준)
-    complaint = (
-        db.query(Complaint)
-        .filter(Complaint.session_id == payload.session_id)
-        .first()
-    )
-
-    # 신규 생성
-    if complaint is None:
-        complaint = Complaint(
-            user_id=payload.user_id,
-            session_id=payload.session_id,
-            title=payload.title,
-            raw_text=payload.raw_text,
-            summary=payload.summary,
-
-            category=payload.category or payload.minwon_type,
-            minwon_type=payload.minwon_type,
-            handling_type=payload.handling_type,
-            risk_level=payload.risk_level,
-
-            needs_visit=payload.needs_visit if payload.needs_visit is not None else False,
-            citizen_request=payload.citizen_request,
-            location=payload.location,
+    try:
+        # 기존 민원 조회 (세션 기준)
+        complaint = (
+            db.query(Complaint)
+            .filter(Complaint.session_id == payload.session_id)
+            .first()
         )
-        db.add(complaint)
-        db.flush()  # id 생성
 
-    # 기존 민원 업데이트 (upsert)
-    else:
-        if payload.title:
-            complaint.title = payload.title
-        if payload.raw_text:
-            complaint.raw_text = payload.raw_text
-        if payload.summary:
-            complaint.summary = payload.summary
-        if payload.category:
-            complaint.category = payload.category
-        if payload.minwon_type:
-            complaint.minwon_type = payload.minwon_type
-        if payload.handling_type:
-            complaint.handling_type = payload.handling_type
-        if payload.risk_level:
-            complaint.risk_level = payload.risk_level
+        # 신규 생성
+        if complaint is None:
+            complaint = Complaint(
+                user_id=payload.user_id,
+                session_id=payload.session_id,
+                title=payload.title,
+                raw_text=payload.raw_text,
+                summary=payload.summary,
 
-        # needs_visit은 명시적으로 전달되면 업데이트
-        if payload.needs_visit is not None:
-            complaint.needs_visit = payload.needs_visit
+                category=payload.category or payload.minwon_type,
+                minwon_type=payload.minwon_type,
+                handling_type=payload.handling_type,
+                risk_level=payload.risk_level,
 
-        if payload.citizen_request:
-            complaint.citizen_request = payload.citizen_request
-        if payload.location:
-            complaint.location = payload.location
+                needs_visit=(
+                    payload.needs_visit if payload.needs_visit is not None else False
+                ),
+                citizen_request=payload.citizen_request,
+                location=payload.location,
+            )
+            db.add(complaint)
+            db.flush()  # id 생성
 
-    db.commit()
-    db.refresh(complaint)
+        # 기존 민원 업데이트 (upsert)
+        else:
+            if payload.title:
+                complaint.title = payload.title
+            if payload.raw_text:
+                complaint.raw_text = payload.raw_text
+            if payload.summary:
+                complaint.summary = payload.summary
+            if payload.category:
+                complaint.category = payload.category
+            if payload.minwon_type:
+                complaint.minwon_type = payload.minwon_type
+            if payload.handling_type:
+                complaint.handling_type = payload.handling_type
+            if payload.risk_level:
+                complaint.risk_level = payload.risk_level
 
-    return {
-        "status": "ok",
-        "id": complaint.id,
-        "session_id": complaint.session_id,
-        "mode": "db",
-    }
+            # needs_visit은 명시적으로 전달되면 업데이트
+            if payload.needs_visit is not None:
+                complaint.needs_visit = payload.needs_visit
+
+            if payload.citizen_request:
+                complaint.citizen_request = payload.citizen_request
+            if payload.location:
+                complaint.location = payload.location
+
+        db.commit()
+        db.refresh(complaint)
+
+        return {
+            "status": "ok",
+            "id": complaint.id,
+            "session_id": complaint.session_id,
+            "mode": "db",
+        }
+
+    except Exception as e:
+        # 🔴 DB 쪽에서 어떤 에러가 나도 여기서 잡고 200으로 응답
+        print("\n❌ [/complaints/create] DB error:", repr(e))
+        db.rollback()
+        return {
+            "status": "error",
+            "mode": "db_error",
+            "session_id": payload.session_id,
+            "error": str(e),
+        }
 
 
 # ---------------------------------------------------------
@@ -185,7 +201,11 @@ def create_message(
 @router.get("/{session_id}")
 def get_complaint(session_id: str, db: Session = Depends(get_db)):
     if not USE_DB:
-        return {"status": "no_db", "session_id": session_id, "detail": "NO_DB_MODE enabled"}
+        return {
+            "status": "no_db",
+            "session_id": session_id,
+            "detail": "NO_DB_MODE enabled",
+        }
 
     complaint = (
         db.query(Complaint)
