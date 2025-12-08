@@ -16,34 +16,33 @@ from typing import Any, Dict, List, Optional
 import httpx
 import requests  # 🔹 네이버 TTS 호출용
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, APIRouter
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    APIRouter,
+    Body,  # ✅ set-phone용
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse  # 🔹 음성 스트리밍 응답
 from openai import OpenAI
 from pydantic import BaseModel, Field
 from core.report_pdf import build_staff_report_pdf
-# from sqlalchemy.orm import Session
-
-# from database import SessionLocal, engine
-# from models import Base, MinwonSession
 from speaker.stt_whisper import transcribe_bytes
 from brain import minwon_engine  # (다른 곳에서 쓰일 가능성 있어 유지)
 from brain.text_session_state import TextSessionState
 from brain.turn_router import choose_issue_for_followup
 from brain.minwon_engine import run_pipeline_once, decide_stage_and_text
 
-
 import db.models
-from fastapi import Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from db.session import get_db
 
-
-
 # 🔹 .env 로드 (core.config에서 os.getenv를 쓰기 전에)
 load_dotenv()
-
 
 router = APIRouter()
 
@@ -107,8 +106,6 @@ def get_state(session_id: str) -> TextSessionState:
 # FastAPI 앱 기본 세팅
 # ============================================================
 
-
-
 app = FastAPI(
     title="간편민원접수 백엔드 API",
     description="""
@@ -124,7 +121,6 @@ app = FastAPI(
 """,
     version="1.0.0",
 )
-
 
 # CORS: 개발 단계에서는 * 허용, 배포 시에는 도메인 제한 권장
 app.add_middleware(
@@ -143,129 +139,6 @@ app.add_middleware(
 )
 def debug_routes():
     return [r.path for r in app.routes]
-
-
-# ============================================================
-# DB 설정 및 세션 헬퍼
-# ============================================================
-
-# Base.metadata.create_all(bind=engine)
-
-
-# def get_db():
-#     db = SessionLocal()
-#     try:
-#         yield db
-#     finally:
-#         db.close()
-
-
-# def create_or_update_minwon_session(
-#     db: Session,
-#     session_id: str,
-#     used_text: str,
-#     engine_result: Dict[str, Any],
-# ):
-#     """
-#     - 한 세션(session_id)당 1행 유지
-#     - 이미 있으면 내용만 갱신, 없으면 새로 INSERT
-#     """
-#     if not engine_result:
-#         return
-
-#     minwon_type = engine_result.get("minwon_type") or "기타"
-#     handling_type = engine_result.get("handling_type") or "simple_guide"
-
-#     staff_payload = engine_result.get("staff_payload") or {}
-#     risk_level = staff_payload.get("risk_level") or "보통"
-
-#     need_official = bool(engine_result.get("need_official_ticket"))
-#     need_call = bool(engine_result.get("need_call_transfer"))
-
-#     if need_official:
-#         status = "ticket_required"
-#     elif need_call:
-#         status = "call_recommended"
-#     else:
-#         status = "guide_only"
-
-#     obj = (
-#         db.query(MinwonSession)
-#         .filter(MinwonSession.session_id == session_id)
-#         .first()
-#     )
-
-#     if obj is None:
-#         # 🔸 최초 생성
-#         obj = MinwonSession(
-#             session_id=session_id,
-#             received_at=datetime.utcnow(),
-#             text_raw=used_text,
-#             minwon_type=minwon_type,
-#             risk_level=risk_level,
-#             handling_type=handling_type,
-#             status=status,
-#         )
-#         db.add(obj)
-#     else:
-#         # 🔸 같은 세션에 대해 내용이 바뀔 때 갱신
-#         obj.text_raw = used_text
-#         obj.minwon_type = minwon_type
-#         obj.risk_level = risk_level
-#         obj.handling_type = handling_type
-#         obj.status = status
-
-#     db.commit()
-#     db.refresh(obj)
-#     return obj
-
-
-# ============================================================
-# STT 요청 공통 처리 유틸
-# ============================================================
-
-async def _parse_stt_request(request: Request) -> Dict[str, Any]:
-    """
-    /stt 관련 엔드포인트에서 공통으로 사용하는
-    - multipart/form-data 파싱
-    - session_id 추출(폼/헤더/쿼리)
-    - 오디오 바이트/파일명 추출
-    로직을 한 곳에 모은 함수입니다.
-    """
-    try:
-        form = await request.form()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"폼 파싱 오류: {e}")
-
-    # session_id 는 있으면 쓰고, 없으면 새로 생성
-    session_id_raw = (
-        form.get("session_id")
-        or request.headers.get("X-Session-ID")
-        or request.query_params.get("session_id")
-    )
-    session_id = (session_id_raw or "").strip() or str(uuid.uuid4())
-
-    # 오디오 파일 추출 (audio 또는 file 필드)
-    upload = form.get("audio") or form.get("file")
-    if upload is None:
-        raise HTTPException(status_code=400, detail="오디오 파일이 없습니다.")
-
-    try:
-        audio_bytes = await upload.read()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"오디오 읽기 오류: {e}")
-
-    if not audio_bytes:
-        raise HTTPException(status_code=400, detail="비어 있는 오디오입니다.")
-
-    filename = getattr(upload, "filename", None) or "record.webm"
-
-    return {
-        "session_id": session_id,
-        "audio_bytes": audio_bytes,
-        "filename": filename,
-        "form": form,
-    }
 
 
 # ============================================================
@@ -560,6 +433,7 @@ async def get_lunar_and_seasonal(today: Optional[date] = None) -> LunarInfo:
 def root():
     return {"message": "간편민원접수 FastAPI 동작 중"}
 
+
 # ============================================================
 # 오늘의 정보 API (날씨 + 절기) - 새 서비스 사용
 # ============================================================
@@ -571,13 +445,14 @@ def root():
     tags=["status"],
 )
 async def api_today_info(
-    location: str = Query("Gwangju", description="도시 이름 또는 좌표(q 파라미터와 동일)")
+    location: str = Query("Gwangju", description="도시 이름 또는 좌표(q 파라미터와 동일)"),
 ):
     """
     services.today_info.get_today_info 를 사용해
     날씨 + 절기를 한 번에 반환하는 엔드포인트.
     """
     return await get_today_info(location)
+
 
 @app.get(
     "/health-db",
@@ -588,6 +463,8 @@ async def api_today_info(
 def health_db(db: Session = Depends(get_db)):
     db.execute(text("SELECT 1"))
     return {"db_status": "ok"}
+
+
 # ============================================================
 # 1. 텍스트 민원 세션 생성 (텍스트-only)
 # ============================================================
@@ -610,6 +487,54 @@ def start_text_session():
 
 
 # ============================================================
+# STT 요청 공통 처리 유틸
+# ============================================================
+
+async def _parse_stt_request(request: Request) -> Dict[str, Any]:
+    """
+    /stt 관련 엔드포인트에서 공통으로 사용하는
+    - multipart/form-data 파싱
+    - session_id 추출(폼/헤더/쿼리)
+    - 오디오 바이트/파일명 추출
+    로직을 한 곳에 모은 함수입니다.
+    """
+    try:
+        form = await request.form()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"폼 파싱 오류: {e}")
+
+    # session_id 는 있으면 쓰고, 없으면 새로 생성
+    session_id_raw = (
+        form.get("session_id")
+        or request.headers.get("X-Session-ID")
+        or request.query_params.get("session_id")
+    )
+    session_id = (session_id_raw or "").strip() or str(uuid.uuid4())
+
+    # 오디오 파일 추출 (audio 또는 file 필드)
+    upload = form.get("audio") or form.get("file")
+    if upload is None:
+        raise HTTPException(status_code=400, detail="오디오 파일이 없습니다.")
+
+    try:
+        audio_bytes = await upload.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"오디오 읽기 오류: {e}")
+
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="비어 있는 오디오입니다.")
+
+    filename = getattr(upload, "filename", None) or "record.webm"
+
+    return {
+        "session_id": session_id,
+        "audio_bytes": audio_bytes,
+        "filename": filename,
+        "form": form,
+    }
+
+
+# ============================================================
 # 2. 텍스트 한 턴 처리 (clarification 결합 포함)
 # ============================================================
 
@@ -624,7 +549,7 @@ def process_text_turn(
 ):
     """
     텍스트 한 턴을 민원 엔진에 넘기고,
-    세션 상태 + DB(minwon_session, engine_log)에 반영한다.
+    세션 상태에 반영한다.
     """
     # 1) 세션 준비
     session_id = body.session_id or str(uuid.uuid4())
@@ -654,26 +579,6 @@ def process_text_turn(
 
     # 3) 민원 엔진 호출
     engine_result = run_pipeline_once(use_text, history)
-
-    # 3-1) DB에 민원세션 upsert
-    # create_or_update_minwon_session(
-    #     db=db,
-    #     session_id=session_id,
-    #     used_text=use_text,
-    #     engine_result=engine_result,
-    # )
-
-    # 3-2) 엔진 로그 저장
-    # try:
-    #     save_engine_log(
-    #         db=db,
-    #         session_id=session_id,
-    #         stage=engine_result.get("stage", "unknown"),
-    #         request_text=use_text,
-    #         response=engine_result,
-    #     )
-    # except Exception as e:
-    #     logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
 
     # 4) history 업데이트
     history.append({"role": "user", "content": use_text})
@@ -771,7 +676,7 @@ def _summarize_log_file(path: Path) -> Optional[LogSessionSummary]:
 
 
 # ============================================================
-#  로그 세션 목록 조회
+# 로그 세션 목록 조회
 # ============================================================
 
 @app.get(
@@ -797,7 +702,7 @@ def list_log_sessions(limit: int = 20):
 
 
 # ============================================================
-#  특정 세션 로그 상세 조회
+# 특정 세션 로그 상세 조회
 # ============================================================
 
 @app.get(
@@ -1011,26 +916,6 @@ async def stt_and_minwon_single(
     # 2) 싱글턴이므로 history/clarification 합치기 없이 그대로 엔진에 넣음
     engine_result = run_pipeline_once(original, history=[])
 
-    # 2-1) 민원세션 DB upsert
-    # create_or_update_minwon_session(
-    #     db=db,
-    #     session_id=session_id,
-    #     used_text=original,
-    #     engine_result=engine_result,
-    # )
-
-    # 2-2) 엔진 로그 DB 저장
-    # try:
-    #     save_engine_log(
-    #         db=db,
-    #         session_id=session_id,
-    #         stage=engine_result.get("stage", "unknown"),
-    #         request_text=original,
-    #         response=engine_result,
-    #     )
-    # except Exception as e:
-    #     logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
-
     # 3) 로그 기록
     log_event(
         session_id,
@@ -1092,24 +977,6 @@ async def stt_and_minwon_multi(
 
         engine_result = run_pipeline_once(effective_text, [])
 
-        # create_or_update_minwon_session(
-        #     db=db,
-        #     session_id=session_id,
-        #     used_text=effective_text,
-        #     engine_result=engine_result,
-        # )
-
-        # try:
-        #     save_engine_log(
-        #         db=db,
-        #         session_id=session_id,
-        #         stage=engine_result.get("stage", "unknown"),
-        #         request_text=effective_text,
-        #         response=engine_result,
-        #     )
-        # except Exception as e:
-        #     logger.warning(f"EngineLog 저장 중 오류 발생: {e}")
-
         turn = state.register_turn(
             user_raw=original,
             effective_text=effective_text,
@@ -1142,7 +1009,6 @@ async def stt_and_minwon_multi(
 
     except Exception as e:
         logger.exception("💥 STT(multi) 처리 중 예외 발생")
-        # detail에 에러 메시지까지 넣으면 프론트 네트워크 탭에서도 바로 보임
         raise HTTPException(status_code=500, detail=f"STT(multi) 내부 오류: {e}")
 
 
@@ -1157,11 +1023,8 @@ async def stt_and_minwon_multi(
 )
 async def stt_and_minwon(
     request: Request,
-    # db: Session = Depends(get_db),   # ✅ DB 세션도 의존성으로 받기
 ):
-    # ✅ FastAPI가 주입해 준 db(Session)를 직접 넘겨준다
     return await stt_and_minwon_multi(request)
-
 
 
 # ============================================================
@@ -1208,10 +1071,8 @@ def tts(req: TtsRequest):
     if not text:
         raise HTTPException(status_code=400, detail="text 파라미터가 비어 있습니다.")
 
-    # speaker / speed 정리
     speaker = (req.speaker or "nara").strip() or "nara"
 
-    # pydantic에서 이미 -5~5 범위 체크를 하지만, 혹시 몰라 한 번 더 방어적 클램핑
     speed_int = req.speed
     if speed_int < -5:
         speed_int = -5
@@ -1351,8 +1212,9 @@ async def stt_and_minwon_multilang(request: Request):
         "staff_payload": staff_payload,
     }
 
+
 # ============================================================
-# 5. 민원 처리 요약 보고서 PDF 생성 엔드포인트
+# 5-A. 민원 처리 요약 보고서 PDF 생성 엔드포인트
 # ============================================================
 
 @router.post("/reports/minwon-pdf")
@@ -1370,49 +1232,85 @@ def create_minwon_report(staff_payload: dict):
 
 
 # ============================================================
-# 6. DB 연결 테스트용 엔드포인트
+# 5-B. 민원 연락처(전화번호) 저장 엔드포인트
+# ============================================================
+
+# @app.post(
+#     "/complaints/set-phone",
+#     summary="민원 전화번호 저장 (번호등록 화면용)",
+#     tags=["complaint"],
+# )
+# def set_complaint_phone(
+#     payload: Dict[str, Any] = Body(...),
+# ):
+#     """번호등록 화면에서 전화번호를 저장할 때 사용하는 엔드포인트.
+
+#     현재는:
+#     - 프론트에서 넘겨주는 JSON을 그대로 받아
+#     - phone 관련 필드만 추출·검증하고
+#     - 로그에만 저장 후 ok 응답을 돌려준다.
+#     """
+#     phone = (
+#         payload.get("phone")
+#         or payload.get("phone_number")
+#         or payload.get("phoneNumber")
+#         or payload.get("tel")
+#     )
+
+#     if not phone:
+#         raise HTTPException(status_code=400, detail="전화번호가 전달되지 않았습니다.")
+
+#     complaint_id = (
+#         payload.get("complaint_id")
+#         or payload.get("complaintId")
+#         or payload.get("id")
+#     )
+#     session_id = payload.get("session_id") or payload.get("sessionId") or "phone_only"
+
+#     log_event(
+#         session_id,
+#         {
+#             "type": "set_phone",
+#             "complaint_id": complaint_id,
+#             "phone": phone,
+#             "raw_payload": payload,
+#         },
+#     )
+
+#     return {"ok": True}
+
+
+# ============================================================
+# 6. DB 연결 테스트용 (현재 주석)
 # ============================================================
 
 # @app.post("/db-test")
 # def db_test(db: Session = Depends(get_db)):
-#     """
-#     DB 연결 테스트용: 가짜 세션 1개 삽입 후 다시 조회해서 돌려줌
-#     """
-#     session_id = str(uuid.uuid4())
+#     ...
 
-#     new_session = MinwonSession(
-#         session_id=session_id,
-#         received_at=datetime.utcnow(),
-#         text_raw="테스트 민원입니다.",
-#         minwon_type="테스트",
-#         risk_level="보통",
-#         handling_type="simple_guide",
-#         status="test",
-#     )
 
-#     db.add(new_session)
-#     db.commit()
-#     db.refresh(new_session)
-
-#     return {
-#         "inserted_session_id": new_session.session_id,
-#         "received_at": new_session.received_at.isoformat(),
-#     }
-
+# ============================================================
+# Router / DB 초기화 및 include
+# ============================================================
 
 from db.base import Base
 from db.session import engine
-from db.models.admin_user import AdminUser 
+from db.models.admin_user import AdminUser
 # Base.metadata.create_all(bind=engine)
-from fastapi import FastAPI
+from fastapi import FastAPI as FastAPIAlias  # 이름 충돌 방지용 (실제 사용 X)
 from routers import admin_user, user, complaint, complaint_message, admin_dashboard
 
+# PDF 등 공통 router
+app.include_router(router)
 
+# 개별 도메인 router
 app.include_router(admin_user.router)
 app.include_router(user.router)
 app.include_router(complaint.router)
 app.include_router(complaint_message.router)
 app.include_router(admin_dashboard.router)
+
+
 # ============================================================
 # 디버그용: 최종 라우트 목록 출력
 # ============================================================
