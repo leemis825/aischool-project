@@ -18,10 +18,7 @@ export default function SummaryPage() {
   // 🔥 sessionStorage 백업
   useEffect(() => {
     if (engineResult) {
-      sessionStorage.setItem(
-        "lastEngineResult",
-        JSON.stringify(engineResult)
-      );
+      sessionStorage.setItem("lastEngineResult", JSON.stringify(engineResult));
     }
   }, [engineResult]);
 
@@ -56,7 +53,6 @@ export default function SummaryPage() {
         const url = URL.createObjectURL(blob);
 
         playTtsUrl(url); // 🔥 audioManager 사용!
-
       } catch (err) {
         console.error("SummaryPage TTS 오류:", err);
       }
@@ -71,7 +67,7 @@ export default function SummaryPage() {
 
   const goToReListen = () => {
     stopTts(); // 🔥 버튼 눌러 페이지 이동할 때도 확실히 정지
-    navigate("/relisten");
+    navigate("/listen");
   };
 
   const goToResult = () => {
@@ -102,19 +98,6 @@ export default function SummaryPage() {
         }}
       >
         <button
-          onClick={goToReListen}
-          style={{
-            padding: "20px 40px",
-            fontSize: "32px",
-            borderRadius: "20px",
-            background: "#F0F0F0",
-            cursor: "pointer",
-          }}
-        >
-          재질문
-        </button>
-
-        <button
           onClick={goToResult}
           style={{
             padding: "20px 40px",
@@ -125,6 +108,18 @@ export default function SummaryPage() {
           }}
         >
           예
+        </button>
+        <button
+          onClick={goToReListen}
+          style={{
+            padding: "20px 40px",
+            fontSize: "32px",
+            borderRadius: "20px",
+            background: "#F0F0F0",
+            cursor: "pointer",
+          }}
+        >
+          재질문
         </button>
       </div>
     </BubbleLayout>

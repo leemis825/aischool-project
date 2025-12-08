@@ -165,3 +165,4 @@ def split_additional_location(text: str) -> Tuple[str, str]:
 
     # 마커가 없으면 전체를 본문으로 간주
     return text.strip(), ""
+
