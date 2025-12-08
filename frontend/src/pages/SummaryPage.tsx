@@ -12,8 +12,8 @@ export default function SummaryPage() {
 
   // ListeningPage 에서 넘겨주는 값들
   const { summary, engineResult } = (location.state || {}) as {
-    summary?: string;      // 옵션: 백엔드 staff_summary 직접 전달
-    engineResult?: any;    // 민원 엔진 전체 결과
+    summary?: string; // 옵션: 백엔드 staff_summary 직접 전달
+    engineResult?: any; // 민원 엔진 전체 결과
   };
 
   // ----------------------------
@@ -47,10 +47,7 @@ export default function SummaryPage() {
   // ----------------------------
   useEffect(() => {
     if (engineResult) {
-      sessionStorage.setItem(
-        "lastEngineResult",
-        JSON.stringify(engineResult)
-      );
+      sessionStorage.setItem("lastEngineResult", JSON.stringify(engineResult));
     }
   }, [engineResult]);
 
@@ -72,7 +69,7 @@ export default function SummaryPage() {
         const blob = await requestTts(ttsText);
         const url = URL.createObjectURL(blob);
 
-        playTtsUrl(url);
+        playTtsUrl(url); // 🔥 audioManager 사용!
       } catch (err) {
         console.error("SummaryPage TTS 오류:", err);
       }
@@ -89,8 +86,8 @@ export default function SummaryPage() {
   // 버튼 동작
   // ----------------------------
   const goToReListen = () => {
-    stopTts();
-    navigate("/relisten");
+    stopTts(); // 🔥 버튼 눌러 페이지 이동할 때도 확실히 정지
+    navigate("/listen");
   };
 
   const goToResult = () => {
@@ -131,14 +128,13 @@ export default function SummaryPage() {
         >
           예
         </button>
-
         <button
           onClick={goToReListen}
           style={{
             padding: "20px 40px",
             fontSize: "32px",
             borderRadius: "20px",
-            background: "F0F0F0",
+            background: "#F0F0F0",
             cursor: "pointer",
           }}
         >

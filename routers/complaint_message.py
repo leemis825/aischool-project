@@ -22,7 +22,7 @@ def create_message(complaint_id: int, sender: str, content: str, db: Session = D
 @router.get("/complaint/{complaint_id}")
 def get_messages(
     complaint_id: int,
-    current_admin: AdminUser = Depends(get_current_admin),   # 🔐 관리자 보호
+    current_admin: AdminUser = Depends(get_current_admin),   
     db: Session = Depends(get_db),
 ):
     return (
