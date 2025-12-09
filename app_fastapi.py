@@ -1235,49 +1235,49 @@ def create_minwon_report(staff_payload: dict):
 # 5-B. 민원 연락처(전화번호) 저장 엔드포인트
 # ============================================================
 
-@app.post(
-    "/complaints/set-phone",
-    summary="민원 전화번호 저장 (번호등록 화면용)",
-    tags=["complaint"],
-)
-def set_complaint_phone(
-    payload: Dict[str, Any] = Body(...),
-):
-    """번호등록 화면에서 전화번호를 저장할 때 사용하는 엔드포인트.
+# @app.post(
+#     "/complaints/set-phone",
+#     summary="민원 전화번호 저장 (번호등록 화면용)",
+#     tags=["complaint"],
+# )
+# def set_complaint_phone(
+#     payload: Dict[str, Any] = Body(...),
+# ):
+#     """번호등록 화면에서 전화번호를 저장할 때 사용하는 엔드포인트.
 
-    현재는:
-    - 프론트에서 넘겨주는 JSON을 그대로 받아
-    - phone 관련 필드만 추출·검증하고
-    - 로그에만 저장 후 ok 응답을 돌려준다.
-    """
-    phone = (
-        payload.get("phone")
-        or payload.get("phone_number")
-        or payload.get("phoneNumber")
-        or payload.get("tel")
-    )
+#     현재는:
+#     - 프론트에서 넘겨주는 JSON을 그대로 받아
+#     - phone 관련 필드만 추출·검증하고
+#     - 로그에만 저장 후 ok 응답을 돌려준다.
+#     """
+#     phone = (
+#         payload.get("phone")
+#         or payload.get("phone_number")
+#         or payload.get("phoneNumber")
+#         or payload.get("tel")
+#     )
 
-    if not phone:
-        raise HTTPException(status_code=400, detail="전화번호가 전달되지 않았습니다.")
+#     if not phone:
+#         raise HTTPException(status_code=400, detail="전화번호가 전달되지 않았습니다.")
 
-    complaint_id = (
-        payload.get("complaint_id")
-        or payload.get("complaintId")
-        or payload.get("id")
-    )
-    session_id = payload.get("session_id") or payload.get("sessionId") or "phone_only"
+#     complaint_id = (
+#         payload.get("complaint_id")
+#         or payload.get("complaintId")
+#         or payload.get("id")
+#     )
+#     session_id = payload.get("session_id") or payload.get("sessionId") or "phone_only"
 
-    log_event(
-        session_id,
-        {
-            "type": "set_phone",
-            "complaint_id": complaint_id,
-            "phone": phone,
-            "raw_payload": payload,
-        },
-    )
+#     log_event(
+#         session_id,
+#         {
+#             "type": "set_phone",
+#             "complaint_id": complaint_id,
+#             "phone": phone,
+#             "raw_payload": payload,
+#         },
+#     )
 
-    return {"ok": True}
+#     return {"ok": True}
 
 
 # ============================================================
